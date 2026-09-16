@@ -17,6 +17,38 @@ const PX_PER_M = CANVAS_PX / FLOOR;
 const VACUUM_SWATH = 1.5;
 const MODEL_SCALE = 1.7;
 
+// ------------------------------------------------------------
+// Роборуки
+// ------------------------------------------------------------
+//
+// Все размеры робота и конвейеров задаются в локальных
+// координатах группы, после чего вся модель масштабируется
+// через MODEL_SCALE.
+//
+// Поэтому BELT_X должен быть примерно:
+// 3.35 / 1.7 ≈ 1.97
+//
+// Берём 2.0 — это практически точное совпадение с длиной руки.
+// ------------------------------------------------------------
+
+const ARM_BELT_X = 2.0;
+const ARM_BELT_START_Z = -5.85;
+const ARM_BELT_END_Z = 5.85;
+const ARM_PICKUP_Z = 0;
+
+const ARM_LENGTH = 2.0;
+
+const ARM_LEFT_ANGLE =
+  -Math.asin(ARM_BELT_X / ARM_LENGTH);
+
+const ARM_RIGHT_ANGLE =
+  Math.asin(ARM_BELT_X / ARM_LENGTH);
+
+const ARM_CENTER_ANGLE = 0;
+
+const ARM_PICKUP_Y = -0.92;
+const ARM_CARRY_Y = -0.15;
+
 const PALETTE = {
   chunkA: "#E3A69B",
   chunkB: "#6FA89E",
@@ -97,11 +129,7 @@ function computeChunks(count, zoneWidth, zoneOffsetX) {
     const colWidth =
       zoneWidth / colsInRow;
 
-    for (
-      let c = 0;
-      c < colsInRow;
-      c++
-    ) {
+    for (let c = 0; c < colsInRow; c++) {
       chunks.push({
         xMin:
           zoneOffsetX +
@@ -141,11 +169,7 @@ function buildRowCenters(chunk) {
 
   const centers = [];
 
-  for (
-    let i = 0;
-    i < numRows;
-    i++
-  ) {
+  for (let i = 0; i < numRows; i++) {
     let rx =
       chunk.xMin +
       VACUUM_SWATH *
@@ -321,7 +345,9 @@ export default function WarehouseRoboticsSim() {
         1.15
       );
 
-    scene.add(hemiLight);
+    scene.add(
+      hemiLight
+    );
 
     const keyLight =
       new THREE.DirectionalLight(
@@ -423,6 +449,7 @@ export default function WarehouseRoboticsSim() {
       );
 
     texture.anisotropy = 8;
+
     texture.colorSpace =
       THREE.SRGBColorSpace;
 
@@ -479,6 +506,7 @@ export default function WarehouseRoboticsSim() {
       -5.35;
 
     floorBase.castShadow = true;
+
     floorBase.receiveShadow =
       true;
 
@@ -513,6 +541,7 @@ export default function WarehouseRoboticsSim() {
                     i %
                       crateColors.length
                   ],
+
                 roughness: 0.72,
                 metalness: 0.04,
               }
@@ -1048,11 +1077,13 @@ export default function WarehouseRoboticsSim() {
             Math.PI *
             2,
 
-          boxIndex: 0,
-
           transferBox: null,
 
-          transferStart: 0,
+          lastCycle: -1,
+
+          pickupTarget: null,
+
+          waitingTime: 0,
         });
       }
     }
@@ -1183,7 +1214,6 @@ export default function WarehouseRoboticsSim() {
               : Math.PI;
         }
 
-        // След робота
         const c = r.chunk;
 
         const minGX =
@@ -1317,6 +1347,70 @@ export default function WarehouseRoboticsSim() {
     };
 
     // ==========================================================
+    // Вспомогательная функция для движения конца руки
+    // ==========================================================
+
+    const getArmEndPosition = (
+      angle,
+      clawY
+    ) => {
+      return {
+        x:
+          Math.sin(angle) *
+          ARM_LENGTH,
+
+        y:
+          1.4 +
+          clawY,
+
+        z:
+          Math.cos(angle) *
+          ARM_LENGTH,
+      };
+    };
+
+    // ==========================================================
+    // Поиск ближайшей коробки к зоне захвата
+    // ==========================================================
+
+    const findWaitingBox = (
+      a
+    ) => {
+      let best = null;
+      let bestDistance =
+        Infinity;
+
+      for (
+        const box of a.boxes
+      ) {
+        if (
+          box.userData.state !==
+          "waiting"
+        ) {
+          continue;
+        }
+
+        const distance =
+          Math.abs(
+            box.userData.z -
+              ARM_PICKUP_Z
+          );
+
+        if (
+          distance <
+          bestDistance
+        ) {
+          bestDistance =
+            distance;
+
+          best = box;
+        }
+      }
+
+      return best;
+    };
+
+    // ==========================================================
     // Роборуки
     // ==========================================================
 
@@ -1326,93 +1420,144 @@ export default function WarehouseRoboticsSim() {
       for (
         const a of st.arms
       ) {
-        // ------------------------------------------------------
-        // Основная фаза движения руки
-        // ------------------------------------------------------
+        const cycleDuration =
+          1 /
+          Math.max(
+            armCycleHz,
+            0.001
+          );
 
         a.phase +=
-          2 *
-          Math.PI *
-          armCycleHz *
-          dt;
+          dt /
+          cycleDuration;
 
-        const cycle =
-          (a.phase %
-            (Math.PI * 2)) /
-          (Math.PI * 2);
+        let cycle =
+          a.phase % 1;
+
+        if (cycle < 0) {
+          cycle += 1;
+        }
 
         // ------------------------------------------------------
-        // Состояния:
+        // Состояния цикла
         //
-        // 0.00 — рука у входной ленты
-        // 0.25 — захват
-        // 0.50 — перенос
-        // 0.75 — отпускание
-        // 1.00 — возврат
+        // 0.00 → 0.18
+        // подъезд к входному конвейеру
+        //
+        // 0.18 → 0.30
+        // опускание захвата
+        //
+        // 0.30 → 0.38
+        // захват коробки
+        //
+        // 0.38 → 0.68
+        // перенос на выходной конвейер
+        //
+        // 0.68 → 0.76
+        // опускание и отпускание
+        //
+        // 0.76 → 1.00
+        // возврат к входному конвейеру
         // ------------------------------------------------------
 
-        let targetAngle = 0;
+        let targetAngle =
+          ARM_LEFT_ANGLE;
 
-        if (cycle < 0.25) {
-          // Смотрит на левую ленту
+        let clawY =
+          ARM_CARRY_Y;
+
+        if (cycle < 0.18) {
+          const t =
+            cycle / 0.18;
+
           targetAngle =
-            -0.72;
+            ARM_CENTER_ANGLE +
+            (
+              ARM_LEFT_ANGLE -
+              ARM_CENTER_ANGLE
+            ) *
+              easeInOut(t);
+
+          clawY =
+            ARM_CARRY_Y;
         } else if (
-          cycle < 0.5
+          cycle < 0.30
         ) {
-          // Поднимает коробку
           targetAngle =
-            -0.72 +
-            (cycle - 0.25) /
-              0.25 *
-              1.44;
+            ARM_LEFT_ANGLE;
+
+          const t =
+            (cycle - 0.18) /
+            0.12;
+
+          clawY =
+            ARM_CARRY_Y +
+            (
+              ARM_PICKUP_Y -
+              ARM_CARRY_Y
+            ) *
+              easeInOut(t);
         } else if (
-          cycle < 0.75
+          cycle < 0.38
         ) {
-          // Несёт к правой ленте
           targetAngle =
-            0.72;
+            ARM_LEFT_ANGLE;
+
+          clawY =
+            ARM_PICKUP_Y;
+        } else if (
+          cycle < 0.68
+        ) {
+          const t =
+            (cycle - 0.38) /
+            0.30;
+
+          targetAngle =
+            ARM_LEFT_ANGLE +
+            (
+              ARM_RIGHT_ANGLE -
+              ARM_LEFT_ANGLE
+            ) *
+              easeInOut(t);
+
+          clawY =
+            ARM_CARRY_Y;
+        } else if (
+          cycle < 0.76
+        ) {
+          targetAngle =
+            ARM_RIGHT_ANGLE;
+
+          const t =
+            (cycle - 0.68) /
+            0.08;
+
+          clawY =
+            ARM_CARRY_Y +
+            (
+              ARM_PICKUP_Y -
+              ARM_CARRY_Y
+            ) *
+              easeInOut(t);
         } else {
-          // Возвращается
+          const t =
+            (cycle - 0.76) /
+            0.24;
+
           targetAngle =
-            0.72 -
-            ((cycle - 0.75) /
-              0.25) *
-              1.44;
+            ARM_RIGHT_ANGLE +
+            (
+              ARM_LEFT_ANGLE -
+              ARM_RIGHT_ANGLE
+            ) *
+              easeInOut(t);
+
+          clawY =
+            ARM_CARRY_Y;
         }
 
         a.pivot.rotation.y =
           targetAngle;
-
-        // ------------------------------------------------------
-        // Высота захвата
-        // ------------------------------------------------------
-
-        let clawY = -0.15;
-
-        if (
-          cycle >= 0.22 &&
-          cycle < 0.30
-        ) {
-          const t =
-            (cycle - 0.22) /
-            0.08;
-
-          clawY =
-            -0.15 -
-            Math.sin(
-              t * Math.PI
-            ) *
-              0.35;
-        }
-
-        if (
-          cycle >= 0.45 &&
-          cycle < 0.75
-        ) {
-          clawY =
-            -0.48;
-        }
 
         a.claw.position.y =
           clawY;
@@ -1424,8 +1569,13 @@ export default function WarehouseRoboticsSim() {
         const boxes =
           a.boxes;
 
-        if (!boxes?.length)
+        if (!boxes?.length) {
           continue;
+        }
+
+        // ------------------------------------------------------
+        // Входная лента
+        // ------------------------------------------------------
 
         for (
           const box of boxes
@@ -1435,26 +1585,46 @@ export default function WarehouseRoboticsSim() {
             "input"
           ) {
             box.userData.z +=
-              1.7 *
+              1.45 *
               dt *
               Math.max(
                 1,
                 armProd / 15
               );
 
-            // Дошла до зоны захвата
+            // Как только коробка подходит
+            // к зоне роборуки, переводим
+            // её в очередь ожидания.
             if (
-              box.userData.z >
-              -0.9
+              box.userData.z >=
+              ARM_PICKUP_Z
             ) {
+              box.userData.z =
+                ARM_PICKUP_Z;
+
               box.userData.state =
                 "waiting";
             }
 
             box.position.set(
-              -3.35,
-              0.52,
+              -ARM_BELT_X,
+              0.82,
               box.userData.z
+            );
+          }
+
+          // ----------------------------------------------------
+          // Ожидание захвата
+          // ----------------------------------------------------
+
+          if (
+            box.userData.state ===
+            "waiting"
+          ) {
+            box.position.set(
+              -ARM_BELT_X,
+              0.82,
+              ARM_PICKUP_Z
             );
           }
 
@@ -1465,18 +1635,25 @@ export default function WarehouseRoboticsSim() {
           if (
             box.userData.state ===
               "waiting" &&
-            cycle > 0.20 &&
-            cycle < 0.34 &&
+            cycle >= 0.30 &&
+            cycle < 0.38 &&
             !a.transferBox
           ) {
-            a.transferBox =
-              box;
+            const pickupBox =
+              findWaitingBox(a);
 
-            box.userData.state =
-              "carried";
+            if (
+              pickupBox === box
+            ) {
+              a.transferBox =
+                box;
 
-            box.userData.transferT =
-              0;
+              box.userData.state =
+                "carried";
+
+              box.userData.transferT =
+                0;
+            }
           }
 
           // ----------------------------------------------------
@@ -1487,14 +1664,6 @@ export default function WarehouseRoboticsSim() {
             box.userData.state ===
             "carried"
           ) {
-            box.userData.transferT +=
-              dt *
-              1.8 *
-              Math.max(
-                1,
-                armProd / 15
-              );
-
             const t =
               Math.min(
                 1,
@@ -1502,42 +1671,61 @@ export default function WarehouseRoboticsSim() {
                   .transferT
               );
 
-            const angle =
-              -0.72 +
-              t * 1.44;
-
-            const radius = 3.35;
-
-            const x =
-              Math.sin(angle) *
-              radius;
-
-            const z =
-              box.userData
-                .homeZ;
-
-            const y =
-              0.7 +
-              Math.sin(
-                t * Math.PI
+            const transferAngle =
+              ARM_LEFT_ANGLE +
+              (
+                ARM_RIGHT_ANGLE -
+                ARM_LEFT_ANGLE
               ) *
-                1.4;
+                easeInOut(t);
+
+            const armPos =
+              getArmEndPosition(
+                transferAngle,
+                ARM_CARRY_Y
+              );
 
             box.position.set(
-              x,
-              y,
-              z
+              armPos.x,
+              armPos.y,
+              armPos.z
             );
 
             box.rotation.y =
-              t * Math.PI * 2;
+              t *
+              Math.PI *
+              2;
 
-            if (t >= 1) {
+            box.userData.transferT +=
+              dt /
+              Math.max(
+                cycleDuration *
+                  0.30,
+                0.001
+              );
+
+            if (
+              box.userData
+                .transferT >=
+              1
+            ) {
               box.userData.state =
                 "output";
 
               box.userData.z =
-                z;
+                ARM_PICKUP_Z;
+
+              box.position.set(
+                ARM_BELT_X,
+                0.82,
+                ARM_PICKUP_Z
+              );
+
+              box.rotation.set(
+                0,
+                0,
+                0
+              );
 
               a.transferBox =
                 null;
@@ -1563,35 +1751,35 @@ export default function WarehouseRoboticsSim() {
               );
 
             box.position.set(
-              3.35,
-              0.52,
+              ARM_BELT_X,
+              0.82,
               box.userData.z
             );
 
             box.rotation.y +=
               dt * 0.8;
 
-            // Уехала далеко —
-            // возвращаем в начало
+            // Когда коробка доехала
+            // до конца выходной ленты,
+            // возвращаем её в начало
+            // входной ленты.
             if (
-              box.userData.z >
-              5.8
+              box.userData.z >=
+              ARM_BELT_END_Z
             ) {
               box.userData.state =
                 "input";
 
               box.userData.z =
-                -5.8 -
-                Math.random() *
-                  1.5;
+                ARM_BELT_START_Z;
 
               box.userData.homeZ =
-                box.userData.z;
+                ARM_BELT_START_Z;
 
               box.position.set(
-                -3.35,
-                0.52,
-                box.userData.z
+                -ARM_BELT_X,
+                0.82,
+                ARM_BELT_START_Z
               );
 
               box.rotation.set(
@@ -1632,7 +1820,10 @@ export default function WarehouseRoboticsSim() {
         const mult =
           speedMult;
 
+        // ------------------------------------------------------
         // Конвейерная лента
+        // ------------------------------------------------------
+
         if (
           st.beltTexture
         ) {
@@ -1644,8 +1835,6 @@ export default function WarehouseRoboticsSim() {
 
         let newlyTotal = 0;
 
-        // Ускоряем именно
-        // симуляционное время
         const simDt =
           realDt * mult;
 
@@ -1667,6 +1856,10 @@ export default function WarehouseRoboticsSim() {
         setSimSeconds(
           st.simAcc
         );
+
+        // ------------------------------------------------------
+        // Статистика пылесосов
+        // ------------------------------------------------------
 
         if (useVacuum) {
           if (
@@ -1718,6 +1911,10 @@ export default function WarehouseRoboticsSim() {
             );
           }
         }
+
+        // ------------------------------------------------------
+        // Статистика роборуки
+        // ------------------------------------------------------
 
         if (useArm) {
           setOpsDone(
@@ -2152,6 +2349,22 @@ function Slider({
         className="w-full accent-[#E8B15A]"
       />
     </label>
+  );
+}
+
+// ============================================================
+// Ease
+// ============================================================
+
+function easeInOut(t) {
+  return (
+    t < 0.5
+      ? 2 * t * t
+      : 1 -
+        Math.pow(
+          -2 * t + 2,
+          2
+        ) / 2
   );
 }
 
@@ -2628,10 +2841,14 @@ function makeArmRobot(
 
   group.add(pivot);
 
+  // ----------------------------------------------------------
+  // Рычаг
+  // ----------------------------------------------------------
+
   const arm =
     new THREE.Mesh(
       new THREE.BoxGeometry(
-        2.2,
+        ARM_LENGTH,
         0.35,
         0.35
       ),
@@ -2639,9 +2856,13 @@ function makeArmRobot(
     );
 
   arm.position.x =
-    1.1;
+    ARM_LENGTH / 2;
 
   pivot.add(arm);
+
+  // ----------------------------------------------------------
+  // Захват
+  // ----------------------------------------------------------
 
   const claw =
     new THREE.Mesh(
@@ -2654,8 +2875,8 @@ function makeArmRobot(
     );
 
   claw.position.set(
-    2.2,
-    -0.15,
+    ARM_LENGTH,
+    ARM_CARRY_Y,
     0
   );
 
@@ -2687,8 +2908,8 @@ function makeArmRobot(
     );
 
   tip.position.set(
-    2.2,
-    -0.15,
+    ARM_LENGTH,
+    ARM_CARRY_Y,
     0.27
   );
 
@@ -2698,16 +2919,17 @@ function makeArmRobot(
   // Две ПАРАЛЛЕЛЬНЫЕ ленты
   // ==========================================================
 
-  const BELT_X = 3.35;
-
   const boxes = [];
 
   [-1, 1].forEach(
     (side) => {
       const x =
-        side * BELT_X;
+        side * ARM_BELT_X;
 
+      // --------------------------------------------------------
       // Основание конвейера
+      // --------------------------------------------------------
+
       const frame =
         new THREE.Mesh(
           new THREE.BoxGeometry(
@@ -2734,7 +2956,10 @@ function makeArmRobot(
 
       group.add(frame);
 
+      // --------------------------------------------------------
       // Сама лента
+      // --------------------------------------------------------
+
       const belt =
         new THREE.Mesh(
           new THREE.BoxGeometry(
@@ -2753,7 +2978,10 @@ function makeArmRobot(
 
       group.add(belt);
 
+      // --------------------------------------------------------
       // Боковые бортики
+      // --------------------------------------------------------
+
       [-0.58, 0.58].forEach(
         (offset) => {
           const rail =
@@ -2823,9 +3051,21 @@ function makeArmRobot(
             material
           );
 
+        // ------------------------------------------------------
+        // ВАЖНО:
+        //
+        // Первая коробка появляется именно
+        // у начала конвейера.
+        //
+        // Конвейер начинается примерно с -5.85.
+        // Коробка целиком остаётся внутри
+        // его длины благодаря небольшому отступу.
+        // ------------------------------------------------------
+
         const startZ =
-          -5.2 -
-          i * 2.1;
+          ARM_BELT_START_Z +
+          0.45 +
+          i * 2.15;
 
         box.position.set(
           x,
