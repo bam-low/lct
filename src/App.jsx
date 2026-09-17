@@ -29,8 +29,6 @@ const ARM_LENGTH = 2.0;
 
 const BOX_GAP = 0.85;
 
-// Рука должна поворачиваться между двумя лентами.
-// Локальная ось X направлена от центра к правой ленте.
 const ARM_LEFT_ANGLE = Math.PI;
 const ARM_RIGHT_ANGLE = 0;
 const ARM_CENTER_ANGLE = 0;
@@ -38,41 +36,48 @@ const ARM_CENTER_ANGLE = 0;
 const ARM_PICKUP_Y = -0.92;
 const ARM_CARRY_Y = -0.15;
 
-const PALETTE = {
-  chunkA: "#ecd5d1",
-  chunkB: "#b8d4d0",
-  storage: "#3F4159",
-  armZone: "#565877",
-  pad: "#8E7FBF",
-  crateA: "#E8B15A",
-  crateB: "#C97B84",
-  crateC: "#7FA6A0",
+// ------------------------------------------------------------
+// Насыщенная пастельная палитра
+// ------------------------------------------------------------
 
-  robotBody: "#FBF3E7",
+const PALETTE = {
+  chunkA: "#E7C8C3",
+  chunkB: "#9CCBC5",
+
+  storage: "#37394F",
+  armZone: "#4C5070",
+  pad: "#8B78C7",
+
+  crateA: "#E5A13F",
+  crateB: "#C85E70",
+  crateC: "#5D9E96",
+
+  robotBody: "#FFF1DC",
 
   vacuumCaps: [
-    "#E8B15A",
-    "#C97B84",
-    "#6FA89E",
-    "#8E7FBF",
-    "#E3A69B",
-    "#E8B15A",
-    "#C97B84",
-    "#6FA89E",
+    "#E5A13F",
+    "#C85E70",
+    "#4F9B90",
+    "#8B78C7",
+    "#D98279",
+    "#E5A13F",
+    "#C85E70",
+    "#4F9B90",
   ],
 
   armAccents: [
-    "#8E7FBF",
-    "#C97B84",
-    "#6FA89E",
-    "#E8B15A",
-    "#8E7FBF",
-    "#C97B84",
+    "#8B78C7",
+    "#C85E70",
+    "#4F9B90",
+    "#E5A13F",
+    "#8B78C7",
+    "#C85E70",
   ],
 
-  trail: "rgba(255,248,230,0.5)",
-  belt: "#2B2C40",
-  beltStripe: "#DCC9A3",
+  trail: "rgba(255,238,198,0.40)",
+
+  belt: "#292B3D",
+  beltStripe: "#D4B96F",
 };
 
 const ISO_ELEV = Math.atan(1 / Math.sqrt(2));
@@ -86,29 +91,74 @@ function computeChunks(count, zoneWidth, zoneOffsetX) {
 
   const cols = Math.max(
     1,
-    Math.round(Math.sqrt((count * zoneWidth) / zoneLength))
+    Math.round(
+      Math.sqrt(
+        (count * zoneWidth) /
+          zoneLength
+      )
+    )
   );
 
-  const fullRows = Math.floor(count / cols);
-  const remainder = count - fullRows * cols;
-  const totalRows = fullRows + (remainder > 0 ? 1 : 0);
+  const fullRows = Math.floor(
+    count / cols
+  );
 
-  const rowHeight = zoneLength / totalRows;
+  const remainder =
+    count -
+    fullRows * cols;
+
+  const totalRows =
+    fullRows +
+    (remainder > 0 ? 1 : 0);
+
+  const rowHeight =
+    zoneLength /
+    totalRows;
+
   const chunks = [];
 
-  for (let row = 0; row < totalRows; row++) {
-    const colsInRow = row < fullRows ? cols : remainder;
+  for (
+    let row = 0;
+    row < totalRows;
+    row++
+  ) {
+    const colsInRow =
+      row < fullRows
+        ? cols
+        : remainder;
 
-    if (colsInRow <= 0) continue;
+    if (colsInRow <= 0) {
+      continue;
+    }
 
-    const colWidth = zoneWidth / colsInRow;
+    const colWidth =
+      zoneWidth /
+      colsInRow;
 
-    for (let c = 0; c < colsInRow; c++) {
+    for (
+      let c = 0;
+      c < colsInRow;
+      c++
+    ) {
       chunks.push({
-        xMin: zoneOffsetX + c * colWidth,
-        xMax: zoneOffsetX + (c + 1) * colWidth,
-        zMin: Z_MIN + row * rowHeight,
-        zMax: Z_MIN + (row + 1) * rowHeight,
+        xMin:
+          zoneOffsetX +
+          c * colWidth,
+
+        xMax:
+          zoneOffsetX +
+          (c + 1) *
+            colWidth,
+
+        zMin:
+          Z_MIN +
+          row * rowHeight,
+
+        zMax:
+          Z_MIN +
+          (row + 1) *
+            rowHeight,
+
         row,
         col: c,
       });
@@ -119,16 +169,39 @@ function computeChunks(count, zoneWidth, zoneOffsetX) {
 }
 
 function buildRowCenters(chunk) {
-  const width = chunk.xMax - chunk.xMin;
-  const numRows = Math.max(1, Math.ceil(width / VACUUM_SWATH));
+  const width =
+    chunk.xMax -
+    chunk.xMin;
+
+  const numRows =
+    Math.max(
+      1,
+      Math.ceil(
+        width /
+          VACUUM_SWATH
+      )
+    );
 
   const centers = [];
 
-  for (let i = 0; i < numRows; i++) {
-    let rx = chunk.xMin + VACUUM_SWATH * (i + 0.5);
+  for (
+    let i = 0;
+    i < numRows;
+    i++
+  ) {
+    let rx =
+      chunk.xMin +
+      VACUUM_SWATH *
+        (i + 0.5);
 
-    if (rx > chunk.xMax - VACUUM_SWATH / 2) {
-      rx = chunk.xMax - VACUUM_SWATH / 2;
+    if (
+      rx >
+      chunk.xMax -
+        VACUUM_SWATH / 2
+    ) {
+      rx =
+        chunk.xMax -
+        VACUUM_SWATH / 2;
     }
 
     centers.push(rx);
@@ -140,18 +213,28 @@ function buildRowCenters(chunk) {
 function easeInOut(t) {
   return t < 0.5
     ? 2 * t * t
-    : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    : 1 -
+      Math.pow(
+        -2 * t + 2,
+        2
+      ) /
+        2;
 }
 
 // ------------------------------------------------------------
 // Цветовой pipeline Three.js r186
 // ------------------------------------------------------------
 
-function applyColorSpace(target, isRenderer) {
+function applyColorSpace(
+  target,
+  isRenderer
+) {
   if (isRenderer) {
-    target.outputColorSpace = THREE.SRGBColorSpace;
+    target.outputColorSpace =
+      THREE.SRGBColorSpace;
   } else {
-    target.colorSpace = THREE.SRGBColorSpace;
+    target.colorSpace =
+      THREE.SRGBColorSpace;
   }
 }
 
@@ -160,32 +243,86 @@ function applyColorSpace(target, isRenderer) {
 // ============================================================
 
 export default function WarehouseRoboticsSim() {
-  const mountRef = useRef(null);
-  const st = useRef({}).current;
+  const mountRef =
+    useRef(null);
 
-  const [mode, setMode] = useState("both");
+  const st =
+    useRef({}).current;
 
-  const [vacuumCount, setVacuumCount] = useState(4);
-  const [vacuumProd, setVacuumProd] = useState(3000);
+  const [mode, setMode] =
+    useState("both");
 
-  const [armCount, setArmCount] = useState(3);
-  const [armProd, setArmProd] = useState(15);
+  const [
+    vacuumCount,
+    setVacuumCount,
+  ] = useState(4);
 
-  const [running, setRunning] = useState(true);
-  const [resetKey, setResetKey] = useState(0);
+  const [
+    vacuumProd,
+    setVacuumProd,
+  ] = useState(3000);
 
-  const [coverage, setCoverage] = useState(0);
-  const [opsDone, setOpsDone] = useState(0);
-  const [simSeconds, setSimSeconds] = useState(0);
-  const [doneCount, setDoneCount] = useState(0);
+  const [
+    armCount,
+    setArmCount,
+  ] = useState(3);
 
-  const [camZoom, setCamZoom] = useState(40);
-  const [speedMult, setSpeedMult] = useState(1);
+  const [
+    armProd,
+    setArmProd,
+  ] = useState(15);
 
-  const useVacuum = mode === "vacuum" || mode === "both";
-  const useArm = mode === "arm" || mode === "both";
+  const [
+    running,
+    setRunning,
+  ] = useState(true);
 
-  const usableWidth = LANE_MAX_X - LANE_MIN_X;
+  const [
+    resetKey,
+    setResetKey,
+  ] = useState(0);
+
+  const [
+    coverage,
+    setCoverage,
+  ] = useState(0);
+
+  const [
+    opsDone,
+    setOpsDone,
+  ] = useState(0);
+
+  const [
+    simSeconds,
+    setSimSeconds,
+  ] = useState(0);
+
+  const [
+    doneCount,
+    setDoneCount,
+  ] = useState(0);
+
+  const [
+    camZoom,
+    setCamZoom,
+  ] = useState(40);
+
+  const [
+    speedMult,
+    setSpeedMult,
+  ] = useState(1);
+
+  const useVacuum =
+    mode === "vacuum" ||
+    mode === "both";
+
+  const useArm =
+    mode === "arm" ||
+    mode === "both";
+
+  const usableWidth =
+    LANE_MAX_X -
+    LANE_MIN_X;
 
   const vacuumZoneWidth =
     mode === "vacuum"
@@ -201,184 +338,265 @@ export default function WarehouseRoboticsSim() {
         ? 0
         : usableWidth * 0.45;
 
-  const zoneSplitX = LANE_MIN_X + vacuumZoneWidth;
+  const zoneSplitX =
+    LANE_MIN_X +
+    vacuumZoneWidth;
 
-  const vacuumSpeed = useVacuum
-    ? vacuumProd / (VACUUM_SWATH * 3600)
-    : 0;
+  const vacuumSpeed =
+    useVacuum
+      ? vacuumProd /
+        (VACUUM_SWATH * 3600)
+      : 0;
 
-  const vacuumZoneAreaM2 = Math.round(
-    vacuumZoneWidth * (Z_MAX - Z_MIN)
-  );
+  const vacuumZoneAreaM2 =
+    Math.round(
+      vacuumZoneWidth *
+        (Z_MAX - Z_MIN)
+    );
 
-  const armCycleHz = useArm ? armProd / 60 : 0;
-  const totalOpsCapacity = useArm ? armCount * armProd : 0;
+  const armCycleHz =
+    useArm
+      ? armProd / 60
+      : 0;
 
-  // ============================================================
+  const totalOpsCapacity =
+    useArm
+      ? armCount * armProd
+      : 0;
+
+  // ==========================================================
   // СЦЕНА
-  // ============================================================
+  // ==========================================================
 
   useEffect(() => {
-    const mount = mountRef.current;
+    const mount =
+      mountRef.current;
 
     if (!mount) return;
 
-    const width = mount.clientWidth;
+    const width =
+      mount.clientWidth;
+
     const height = 460;
 
-    // ----------------------------------------------------------
-    // Scene
-    // ----------------------------------------------------------
+    const scene =
+      new THREE.Scene();
 
-    const scene = new THREE.Scene();
+    scene.fog =
+      new THREE.Fog(
+        0x77798f,
+        145,
+        245
+      );
 
-    // Лёгкая атмосферная глубина.
-    // Не туман "стеной", а едва заметное смешивание дальних
-    // объектов с холодным фоном.
-    scene.fog = new THREE.Fog(0x77758f, 125, 235);
+    // ==========================================================
+    // Освещение
+    // ==========================================================
 
-    // ----------------------------------------------------------
-    // SHADER-LIKE LIGHTING
-    // ----------------------------------------------------------
+    const hemisphereLight =
+      new THREE.HemisphereLight(
+        0xe9e3ff,
+        0x35384e,
+        3
+      );
 
-    // Холодное общее освещение.
-    // Даёт деталям в тенях не проваливаться в чёрный.
-    const hemisphereLight = new THREE.HemisphereLight(
-      0xf3f1ff,
-      0x50536d,
-      2.15
+    scene.add(
+      hemisphereLight
     );
 
-    scene.add(hemisphereLight);
+    const ambientLight =
+      new THREE.AmbientLight(
+        0x777b9d,
+        0.17
+      );
 
-    // Небольшой ambient — только чтобы очень глубокие тени
-    // не превращались в полностью чёрные области.
-    const ambientLight = new THREE.AmbientLight(
-      0x74799a,
-      0.16
+    scene.add(
+      ambientLight
     );
 
-    scene.add(ambientLight);
+    const keyLight =
+      new THREE.DirectionalLight(
+        0xffdca2,
+        3
+      );
 
-    // ----------------------------------------------------------
-    // Тёплое "солнце"
-    // ----------------------------------------------------------
-
-    const keyLight = new THREE.DirectionalLight(
-      0xffe5b5,
-      2.0
+    keyLight.position.set(
+      38,
+      90,
+      32
     );
 
-    keyLight.position.set(35, 90, 28);
+    keyLight.castShadow =
+      true;
 
-    keyLight.castShadow = true;
+    keyLight.shadow.camera.left =
+      -70;
 
-    keyLight.shadow.camera.left = -70;
-    keyLight.shadow.camera.right = 70;
-    keyLight.shadow.camera.top = 70;
-    keyLight.shadow.camera.bottom = -70;
+    keyLight.shadow.camera.right =
+      70;
 
-    keyLight.shadow.camera.near = 1;
-    keyLight.shadow.camera.far = 230;
+    keyLight.shadow.camera.top =
+      70;
 
-    keyLight.shadow.mapSize.width = 2048;
-    keyLight.shadow.mapSize.height = 2048;
+    keyLight.shadow.camera.bottom =
+      -70;
 
-    keyLight.shadow.bias = -0.00012;
-    keyLight.shadow.normalBias = 0.025;
+    keyLight.shadow.camera.near =
+      1;
 
-    scene.add(keyLight);
+    keyLight.shadow.camera.far =
+      230;
 
-    // ----------------------------------------------------------
-    // Холодный fill.
-    // Имитация рассеянного света неба.
-    // ----------------------------------------------------------
+    keyLight.shadow.mapSize.width =
+      2048;
 
-    const fillLight = new THREE.DirectionalLight(
-      0x8ea6e8,
-      0.55
+    keyLight.shadow.mapSize.height =
+      2048;
+
+    keyLight.shadow.bias =
+      -0.00012;
+
+    keyLight.shadow.normalBias =
+      0.035;
+
+    keyLight.shadow.radius =
+      4;
+
+    scene.add(
+      keyLight
     );
 
-    fillLight.position.set(-45, 45, -40);
+    const fillLight =
+      new THREE.DirectionalLight(
+        0x8498d4,
+        0.30
+      );
 
-    scene.add(fillLight);
-
-    // ----------------------------------------------------------
-    // Тёплый контровой свет.
-    // Делает края моделей читаемыми.
-    // ----------------------------------------------------------
-
-    const rimLight = new THREE.DirectionalLight(
-      0xffc48c,
-      0.42
+    fillLight.position.set(
+      -45,
+      48,
+      -42
     );
 
-    rimLight.position.set(-25, 32, 55);
+    scene.add(
+      fillLight
+    );
 
-    scene.add(rimLight);
+    const rimLight =
+      new THREE.DirectionalLight(
+        0xffb36f,
+        0.26
+      );
+
+    rimLight.position.set(
+      -25,
+      34,
+      58
+    );
+
+    scene.add(
+      rimLight
+    );
 
     // ==========================================================
     // Текстура пола
     // ==========================================================
 
-    const canvas = document.createElement("canvas");
+    const canvas =
+      document.createElement(
+        "canvas"
+      );
 
-    canvas.width = CANVAS_PX;
-    canvas.height = CANVAS_PX;
+    canvas.width =
+      CANVAS_PX;
 
-    const ctx = canvas.getContext("2d");
+    canvas.height =
+      CANVAS_PX;
 
-    const texture = new THREE.CanvasTexture(canvas);
+    const ctx =
+      canvas.getContext(
+        "2d"
+      );
+
+    const texture =
+      new THREE.CanvasTexture(
+        canvas
+      );
 
     texture.anisotropy = 8;
 
-    applyColorSpace(texture, false);
+    applyColorSpace(
+      texture,
+      false
+    );
 
     // ==========================================================
     // Пол
     // ==========================================================
 
-    const floorMaterial = new THREE.MeshStandardMaterial({
-      map: texture,
-      flatShading: true,
-      roughness: 0.92,
-      metalness: 0.01,
-    });
+    const floorMaterial =
+      new THREE.MeshStandardMaterial(
+        {
+          map: texture,
 
-    const floorTop = new THREE.Mesh(
-      new THREE.BoxGeometry(FLOOR, 2, FLOOR),
-      floorMaterial
+          flatShading: true,
+
+          roughness: 0.68,
+          metalness: 0.04,
+        }
+      );
+
+    const floorTop =
+      new THREE.Mesh(
+        new THREE.BoxGeometry(
+          FLOOR,
+          2,
+          FLOOR
+        ),
+        floorMaterial
+      );
+
+    floorTop.position.y =
+      -1;
+
+    floorTop.receiveShadow =
+      true;
+
+    scene.add(
+      floorTop
     );
 
-    floorTop.position.y = -1;
-    floorTop.receiveShadow = true;
+    const floorBaseMaterial =
+      new THREE.MeshStandardMaterial(
+        {
+          color: 0x27293b,
 
-    scene.add(floorTop);
+          flatShading: true,
 
-    // ----------------------------------------------------------
-    // Нижняя массивная часть пола
-    // ----------------------------------------------------------
+          roughness: 0.92,
+          metalness: 0.0,
+        }
+      );
 
-    const floorBaseMaterial = new THREE.MeshStandardMaterial({
-      color: 0x292b3d,
-      flatShading: true,
-      roughness: 0.88,
-      metalness: 0.04,
-    });
+    const floorBase =
+      new THREE.Mesh(
+        new THREE.BoxGeometry(
+          FLOOR + 6,
+          6,
+          FLOOR + 6
+        ),
+        floorBaseMaterial
+      );
 
-    const floorBase = new THREE.Mesh(
-      new THREE.BoxGeometry(
-        FLOOR + 6,
-        6,
-        FLOOR + 6
-      ),
-      floorBaseMaterial
+    floorBase.position.y =
+      -5.35;
+
+    floorBase.receiveShadow =
+      true;
+
+    scene.add(
+      floorBase
     );
-
-    floorBase.position.y = -5.35;
-    floorBase.receiveShadow = true;
-
-    scene.add(floorBase);
 
     // ==========================================================
     // Боковые складские блоки
@@ -390,100 +608,182 @@ export default function WarehouseRoboticsSim() {
       PALETTE.crateC,
     ];
 
-    [-1, 1].forEach((side) => {
-      for (let i = 0; i < 5; i++) {
-        const h = 3 + ((i * 7) % 5);
+    [-1, 1].forEach(
+      (side) => {
+        for (
+          let i = 0;
+          i < 5;
+          i++
+        ) {
+          const h =
+            3 +
+            ((i * 7) % 5);
 
-        const material = new THREE.MeshStandardMaterial({
-          color: crateColors[i % crateColors.length],
-          flatShading: true,
-          roughness: 0.76,
-          metalness: 0.025,
-        });
+          const material =
+            new THREE.MeshStandardMaterial(
+              {
+                color:
+                  crateColors[
+                    i %
+                      crateColors.length
+                  ],
 
-        const crate = new THREE.Mesh(
-          new THREE.BoxGeometry(
-            MARGIN - 3,
-            h,
-            6
-          ),
-          material
-        );
+                flatShading:
+                  true,
 
-        crate.position.set(
-          side * (FLOOR / 2 - MARGIN / 2),
-          h / 2,
-          -40 + i * 18
-        );
+                roughness: 0.60,
+                metalness: 0.0,
+              }
+            );
 
-        crate.castShadow = true;
-        crate.receiveShadow = true;
+          const crate =
+            new THREE.Mesh(
+              new THREE.BoxGeometry(
+                MARGIN - 3,
+                h,
+                6
+              ),
+              material
+            );
 
-        scene.add(crate);
+          crate.position.set(
+            side *
+              (FLOOR / 2 -
+                MARGIN / 2),
 
-        // Светлая верхняя кромка.
-        const edge = new THREE.Mesh(
-          new THREE.BoxGeometry(
-            MARGIN - 3.05,
-            0.08,
-            6.05
-          ),
-          new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.16,
-            roughness: 0.4,
-          })
-        );
+            h / 2,
 
-        edge.position.y = h / 2 + 0.05;
+            -40 +
+              i * 18
+          );
 
-        edge.castShadow = false;
-        edge.receiveShadow = false;
+          crate.castShadow =
+            true;
 
-        crate.add(edge);
+          crate.receiveShadow =
+            true;
+
+          scene.add(
+            crate
+          );
+
+          const edge =
+            new THREE.Mesh(
+              new THREE.BoxGeometry(
+                MARGIN -
+                  3.05,
+                0.08,
+                6.05
+              ),
+              new THREE.MeshStandardMaterial(
+                {
+                  color: 0xffffff,
+
+                  transparent:
+                    true,
+
+                  opacity: 0.13,
+
+                  roughness: 0.58,
+
+                  metalness: 0,
+                }
+              )
+            );
+
+          edge.position.y =
+            h / 2 +
+            0.05;
+
+          crate.add(
+            edge
+          );
+        }
       }
-    });
+    );
 
     // ==========================================================
     // Текстура конвейеров
     // ==========================================================
 
-    const beltCanvas = document.createElement("canvas");
+    const beltCanvas =
+      document.createElement(
+        "canvas"
+      );
 
     beltCanvas.width = 128;
     beltCanvas.height = 32;
 
-    const bctx = beltCanvas.getContext("2d");
+    const bctx =
+      beltCanvas.getContext(
+        "2d"
+      );
 
-    bctx.fillStyle = PALETTE.belt;
-    bctx.fillRect(0, 0, 128, 32);
+    bctx.fillStyle =
+      PALETTE.belt;
 
-    bctx.fillStyle = PALETTE.beltStripe;
+    bctx.fillRect(
+      0,
+      0,
+      128,
+      32
+    );
 
-    for (let i = -32; i < 128; i += 24) {
+    bctx.fillStyle =
+      PALETTE.beltStripe;
+
+    for (
+      let i = -32;
+      i < 128;
+      i += 24
+    ) {
       bctx.beginPath();
 
-      bctx.moveTo(i, 32);
-      bctx.lineTo(i + 12, 0);
-      bctx.lineTo(i + 17, 0);
-      bctx.lineTo(i + 5, 32);
+      bctx.moveTo(
+        i,
+        32
+      );
+
+      bctx.lineTo(
+        i + 12,
+        0
+      );
+
+      bctx.lineTo(
+        i + 17,
+        0
+      );
+
+      bctx.lineTo(
+        i + 5,
+        32
+      );
 
       bctx.fill();
     }
 
-    const beltTexture = new THREE.CanvasTexture(
-      beltCanvas
+    const beltTexture =
+      new THREE.CanvasTexture(
+        beltCanvas
+      );
+
+    beltTexture.wrapS =
+      THREE.RepeatWrapping;
+
+    beltTexture.wrapT =
+      THREE.RepeatWrapping;
+
+    beltTexture.repeat.set(
+      3,
+      1
     );
-
-    beltTexture.wrapS = THREE.RepeatWrapping;
-    beltTexture.wrapT = THREE.RepeatWrapping;
-
-    beltTexture.repeat.set(3, 1);
 
     beltTexture.anisotropy = 8;
 
-    applyColorSpace(beltTexture, false);
+    applyColorSpace(
+      beltTexture,
+      false
+    );
 
     // ==========================================================
     // Camera
@@ -491,60 +791,84 @@ export default function WarehouseRoboticsSim() {
 
     const camDist = 108;
 
-    const camera = new THREE.OrthographicCamera(
-      -1,
-      1,
-      1,
-      -1,
-      0.1,
-      500
-    );
+    const camera =
+      new THREE.OrthographicCamera(
+        -1,
+        1,
+        1,
+        -1,
+        0.1,
+        500
+      );
 
     // ==========================================================
     // Renderer
     // ==========================================================
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true,
-      powerPreference: "high-performance",
-    });
+    const renderer =
+      new THREE.WebGLRenderer(
+        {
+          antialias: true,
 
-    renderer.setClearColor(0x000000, 0);
+          alpha: true,
 
-    renderer.setPixelRatio(
-      Math.min(window.devicePixelRatio, 2)
+          powerPreference:
+            "high-performance",
+        }
+      );
+
+    renderer.setClearColor(
+      0x000000,
+      0
     );
 
-    renderer.setSize(width, height);
+    renderer.setPixelRatio(
+      Math.min(
+        window.devicePixelRatio,
+        2
+      )
+    );
 
-    // Правильный цветовой pipeline для r186.
-    applyColorSpace(renderer, true);
+    renderer.setSize(
+      width,
+      height
+    );
 
-    // ----------------------------------------------------------
-    // Tone mapping
-    // ----------------------------------------------------------
+    applyColorSpace(
+      renderer,
+      true
+    );
 
-    renderer.toneMapping = THREE.LinearToneMapping;
-    renderer.toneMappingExposure = 0.88;
+    renderer.toneMapping =
+      THREE.ACESFilmicToneMapping;
 
-    // ----------------------------------------------------------
-    // Тени
-    // ----------------------------------------------------------
+    renderer.toneMappingExposure =
+      0.92;
 
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.enabled =
+      true;
 
-    mount.appendChild(renderer.domElement);
+    renderer.shadowMap.type =
+      THREE.PCFSoftShadowMap;
+
+    mount.appendChild(
+      renderer.domElement
+    );
 
     // ==========================================================
     // Groups
     // ==========================================================
 
-    const vacuumGroup = new THREE.Group();
-    const armGroup = new THREE.Group();
+    const vacuumGroup =
+      new THREE.Group();
 
-    scene.add(vacuumGroup, armGroup);
+    const armGroup =
+      new THREE.Group();
+
+    scene.add(
+      vacuumGroup,
+      armGroup
+    );
 
     // ==========================================================
     // State
@@ -568,14 +892,21 @@ export default function WarehouseRoboticsSim() {
       vacuums: [],
       arms: [],
 
-      clock: new THREE.Timer(),
+      clock:
+        new THREE.Timer(),
 
-      grid: new Uint8Array(GRID * GRID),
+      grid:
+        new Uint8Array(
+          GRID * GRID
+        ),
 
       raf: null,
 
-      theta: Math.PI / 4,
-      thetaTarget: Math.PI / 4,
+      theta:
+        Math.PI / 4,
+
+      thetaTarget:
+        Math.PI / 4,
 
       opsAcc: 0,
       simAcc: 0,
@@ -590,36 +921,73 @@ export default function WarehouseRoboticsSim() {
     // Camera
     // ==========================================================
 
-    const updateCamera = () => {
-      const t = st.theta;
-      const d = st.camDist;
+    const updateCamera =
+      () => {
+        const t =
+          st.theta;
 
-      camera.position.set(
-        d * Math.cos(ISO_ELEV) * Math.sin(t),
-        d * Math.sin(ISO_ELEV),
-        d * Math.cos(ISO_ELEV) * Math.cos(t)
-      );
+        const d =
+          st.camDist;
 
-      camera.lookAt(0, 0, 0);
-    };
+        camera.position.set(
+          d *
+            Math.cos(
+              ISO_ELEV
+            ) *
+            Math.sin(t),
 
-    const applyFrustum = () => {
-      const w = mount.clientWidth;
-      const h = 460;
+          d *
+            Math.sin(
+              ISO_ELEV
+            ),
 
-      const a = w / h;
-      const hh = st.camZoom;
+          d *
+            Math.cos(
+              ISO_ELEV
+            ) *
+            Math.cos(t)
+        );
 
-      camera.left = -hh * a;
-      camera.right = hh * a;
-      camera.top = hh;
-      camera.bottom = -hh;
+        camera.lookAt(
+          0,
+          0,
+          0
+        );
+      };
 
-      camera.updateProjectionMatrix();
-    };
+    const applyFrustum =
+      () => {
+        const w =
+          mount.clientWidth;
 
-    st.updateCamera = updateCamera;
-    st.applyFrustum = applyFrustum;
+        const h = 460;
+
+        const a =
+          w / h;
+
+        const hh =
+          st.camZoom;
+
+        camera.left =
+          -hh * a;
+
+        camera.right =
+          hh * a;
+
+        camera.top =
+          hh;
+
+        camera.bottom =
+          -hh;
+
+        camera.updateProjectionMatrix();
+      };
+
+    st.updateCamera =
+      updateCamera;
+
+    st.applyFrustum =
+      applyFrustum;
 
     updateCamera();
     applyFrustum();
@@ -628,14 +996,15 @@ export default function WarehouseRoboticsSim() {
     // Resize
     // ==========================================================
 
-    const onResize = () => {
-      renderer.setSize(
-        mount.clientWidth,
-        460
-      );
+    const onResize =
+      () => {
+        renderer.setSize(
+          mount.clientWidth,
+          460
+        );
 
-      applyFrustum();
-    };
+        applyFrustum();
+      };
 
     window.addEventListener(
       "resize",
@@ -652,12 +1021,16 @@ export default function WarehouseRoboticsSim() {
         onResize
       );
 
-      cancelAnimationFrame(st.raf);
+      cancelAnimationFrame(
+        st.raf
+      );
 
       renderer.dispose();
 
       if (
-        renderer.domElement.parentNode === mount
+        renderer.domElement
+          .parentNode ===
+        mount
       ) {
         mount.removeChild(
           renderer.domElement
@@ -675,7 +1048,8 @@ export default function WarehouseRoboticsSim() {
   useEffect(() => {
     if (!st.scene) return;
 
-    st.camZoom = camZoom;
+    st.camZoom =
+      camZoom;
 
     st.applyFrustum();
   }, [camZoom]);
@@ -700,49 +1074,73 @@ export default function WarehouseRoboticsSim() {
     // ----------------------------------------------------------
 
     if (useVacuum) {
-      vacuumChunks = computeChunks(
-        vacuumCount,
-        vacuumZoneWidth,
-        LANE_MIN_X
+      vacuumChunks =
+        computeChunks(
+          vacuumCount,
+          vacuumZoneWidth,
+          LANE_MIN_X
+        );
+
+      vacuumChunks.forEach(
+        (chunk, i) => {
+          const rowCenters =
+            buildRowCenters(
+              chunk
+            );
+
+          const g =
+            makeVacuumRobot(
+              PALETTE
+                .vacuumCaps[
+                i %
+                  PALETTE
+                    .vacuumCaps
+                    .length
+              ]
+            );
+
+          g.scale.setScalar(
+            MODEL_SCALE
+          );
+
+          g.position.set(
+            rowCenters[0],
+            0.5,
+            chunk.zMin
+          );
+
+          st.vacuumGroup.add(
+            g
+          );
+
+          st.vacuums.push({
+            group: g,
+
+            chunk,
+
+            rowCenters,
+
+            rowIdx: 0,
+
+            x: rowCenters[0],
+
+            z: chunk.zMin,
+
+            // Последняя позиция нужна только
+            // для построения цельного визуального следа
+            lastX: rowCenters[0],
+            lastZ: chunk.zMin,
+
+            dirZ: 1,
+
+            bob:
+              Math.random() *
+              10,
+
+            done: false,
+          });
+        }
       );
-
-      vacuumChunks.forEach((chunk, i) => {
-        const rowCenters =
-          buildRowCenters(chunk);
-
-        const g = makeVacuumRobot(
-          PALETTE.vacuumCaps[
-            i % PALETTE.vacuumCaps.length
-          ]
-        );
-
-        g.scale.setScalar(MODEL_SCALE);
-
-        g.position.set(
-          rowCenters[0],
-          0.5,
-          chunk.zMin
-        );
-
-        st.vacuumGroup.add(g);
-
-        st.vacuums.push({
-          group: g,
-          chunk,
-          rowCenters,
-
-          rowIdx: 0,
-
-          x: rowCenters[0],
-          z: chunk.zMin,
-
-          dirZ: 1,
-
-          bob: Math.random() * 10,
-
-          done: false,
-        });
-      });
     }
 
     // ----------------------------------------------------------
@@ -758,15 +1156,24 @@ export default function WarehouseRoboticsSim() {
         (Z_MAX - Z_MIN) /
         armCount;
 
-      for (let i = 0; i < armCount; i++) {
+      for (
+        let i = 0;
+        i < armCount;
+        i++
+      ) {
         const z =
           Z_MIN +
-          spacing * (i + 0.5);
+          spacing *
+            (i + 0.5);
 
         const built =
           makeArmRobot(
-            PALETTE.armAccents[
-              i % PALETTE.armAccents.length
+            PALETTE
+              .armAccents[
+              i %
+                PALETTE
+                  .armAccents
+                  .length
             ],
             st.beltTexture
           );
@@ -788,12 +1195,14 @@ export default function WarehouseRoboticsSim() {
         st.arms.push({
           ...built,
 
-          // Фаза должна быть нормализована 0..1.
-          phase: Math.random(),
+          phase:
+            Math.random(),
 
-          transferBox: null,
+          transferBox:
+            null,
 
-          lastGoingRight: undefined,
+          lastGoingRight:
+            undefined,
         });
       }
     }
@@ -815,7 +1224,8 @@ export default function WarehouseRoboticsSim() {
       }
     );
 
-    st.texture.needsUpdate = true;
+    st.texture.needsUpdate =
+      true;
 
     st.opsAcc = 0;
     st.simAcc = 0;
@@ -841,711 +1251,919 @@ export default function WarehouseRoboticsSim() {
   useEffect(() => {
     if (!st.scene) return;
 
-    const EPS = 1e-6;
+    const EPS =
+      1e-6;
 
     const MARK_RADIUS =
-      (VACUUM_SWATH / 2) * 1.2;
+      (VACUUM_SWATH / 2) *
+      1.2;
 
     // ----------------------------------------------------------
     // Пылесос
     // ----------------------------------------------------------
 
-    const advanceVacuum = (dt) => {
-      let newly = 0;
-
-      for (const r of st.vacuums) {
-        if (!r.done) {
-          r.z +=
-            r.dirZ *
-            vacuumSpeed *
-            dt;
-
-          const atMax =
-            r.dirZ > 0 &&
-            r.z >= r.chunk.zMax;
-
-          const atMin =
-            r.dirZ < 0 &&
-            r.z <= r.chunk.zMin;
-
-          if (atMax || atMin) {
-            r.z = atMax
-              ? r.chunk.zMax
-              : r.chunk.zMin;
-
-            r.rowIdx++;
-
-            if (
-              r.rowIdx >=
-              r.rowCenters.length
-            ) {
-              r.done = true;
-            } else {
-              r.dirZ *= -1;
-
-              r.x =
-                r.rowCenters[
-                  r.rowIdx
-                ];
-            }
-          }
-
-          r.bob += dt * 4;
-
-          r.group.position.set(
-            r.x,
-            0.5 +
-              Math.sin(r.bob) *
-                0.05,
-            r.z
-          );
-
-          r.group.rotation.y =
-            r.dirZ > 0
-              ? 0
-              : Math.PI;
-        }
-
-        // ------------------------------------------------------
-        // След уборки
-        // ------------------------------------------------------
-
-        const c = r.chunk;
-
-        const minGX = Math.max(
-          0,
-          Math.floor(
-            Math.max(
-              r.x - MARK_RADIUS,
-              c.xMin
-            ) +
-              FLOOR / 2
-          )
-        );
-
-        const maxGX = Math.min(
-          GRID - 1,
-          Math.ceil(
-            Math.min(
-              r.x + MARK_RADIUS,
-              c.xMax
-            ) +
-              FLOOR / 2
-          )
-        );
-
-        const minGZ = Math.max(
-          0,
-          Math.floor(
-            Math.max(
-              r.z - MARK_RADIUS,
-              c.zMin
-            ) +
-              FLOOR / 2
-          )
-        );
-
-        const maxGZ = Math.min(
-          GRID - 1,
-          Math.ceil(
-            Math.min(
-              r.z + MARK_RADIUS,
-              c.zMax
-            ) +
-              FLOOR / 2
-          )
-        );
+    const advanceVacuum =
+      (dt) => {
+        let newly = 0;
 
         for (
-          let gx = minGX;
-          gx <= maxGX;
-          gx++
+          const r of st.vacuums
         ) {
-          for (
-            let gz = minGZ;
-            gz <= maxGZ;
-            gz++
-          ) {
-            const wx =
-              gx -
-              FLOOR / 2 +
-              0.5;
+          if (!r.done) {
+            r.z +=
+              r.dirZ *
+              vacuumSpeed *
+              dt;
 
-            const wz =
-              gz -
-              FLOOR / 2 +
-              0.5;
+            const atMax =
+              r.dirZ > 0 &&
+              r.z >=
+                r.chunk.zMax;
+
+            const atMin =
+              r.dirZ < 0 &&
+              r.z <=
+                r.chunk.zMin;
 
             if (
-              wx <
-                c.xMin - EPS ||
-              wx >
-                c.xMax + EPS ||
-              wz <
-                c.zMin - EPS ||
-              wz >
-                c.zMax + EPS
+              atMax ||
+              atMin
             ) {
-              continue;
+              r.z =
+                atMax
+                  ? r.chunk.zMax
+                  : r.chunk.zMin;
+
+              r.rowIdx++;
+
+              if (
+                r.rowIdx >=
+                r.rowCenters
+                  .length
+              ) {
+                r.done =
+                  true;
+              } else {
+                r.dirZ *= -1;
+
+                r.x =
+                  r.rowCenters[
+                    r.rowIdx
+                  ];
+              }
             }
 
-            if (
-              (wx - r.x) ** 2 +
-                (wz - r.z) ** 2 <=
-              MARK_RADIUS ** 2
+            r.bob +=
+              dt * 4;
+
+            r.group.position.set(
+              r.x,
+
+              0.5 +
+                Math.sin(
+                  r.bob
+                ) *
+                  0.05,
+
+              r.z
+            );
+
+            r.group.rotation.y =
+              r.dirZ > 0
+                ? 0
+                : Math.PI;
+          }
+
+          // ----------------------------------------------------
+          // ЕДИНЫЙ СЛЕД ПЫЛЕСОСА
+          // ----------------------------------------------------
+          //
+          // Важно:
+          // здесь больше НЕТ рисования следа по клеткам.
+          // Клетки ниже используются только для расчёта
+          // процента покрытия.
+          //
+          // Визуально след строится как непрерывная
+          // закруглённая полоса между предыдущей и текущей
+          // координатой робота.
+          // ----------------------------------------------------
+
+          if (
+            Math.abs(
+              r.x -
+                r.lastX
+            ) > 0.0001 ||
+            Math.abs(
+              r.z -
+                r.lastZ
+            ) > 0.0001
+          ) {
+            const px =
+              (r.lastX +
+                FLOOR / 2) *
+              PX_PER_M;
+
+            const pz =
+              (r.lastZ +
+                FLOOR / 2) *
+              PX_PER_M;
+
+            const cx =
+              (r.x +
+                FLOOR / 2) *
+              PX_PER_M;
+
+            const cz =
+              (r.z +
+                FLOOR / 2) *
+              PX_PER_M;
+
+            const ctx =
+              st.ctx;
+
+            ctx.save();
+
+            ctx.lineCap =
+              "round";
+
+            ctx.lineJoin =
+              "round";
+
+            // ------------------------------------------------
+            // Мягкая внешняя часть.
+            // Она немного шире самого робота и делает
+            // переходы между сегментами визуально цельными.
+            // ------------------------------------------------
+
+            ctx.strokeStyle =
+              "rgba(255,248,225,0.22)";
+
+            ctx.lineWidth =
+              VACUUM_SWATH *
+              PX_PER_M *
+              0.95;
+
+            ctx.beginPath();
+
+            ctx.moveTo(
+              px,
+              pz
+            );
+
+            ctx.lineTo(
+              cx,
+              cz
+            );
+
+            ctx.stroke();
+
+            // ------------------------------------------------
+            // Основная часть следа.
+            // ------------------------------------------------
+
+            ctx.strokeStyle =
+              PALETTE.trail;
+
+            ctx.lineWidth =
+              VACUUM_SWATH *
+              PX_PER_M *
+              0.72;
+
+            ctx.beginPath();
+
+            ctx.moveTo(
+              px,
+              pz
+            );
+
+            ctx.lineTo(
+              cx,
+              cz
+            );
+
+            ctx.stroke();
+
+            // ------------------------------------------------
+            // Очень мягкий центральный блик.
+            // ------------------------------------------------
+
+            ctx.strokeStyle =
+              "rgba(255,252,238,0.10)";
+
+            ctx.lineWidth =
+              VACUUM_SWATH *
+              PX_PER_M *
+              0.28;
+
+            ctx.beginPath();
+
+            ctx.moveTo(
+              px,
+              pz
+            );
+
+            ctx.lineTo(
+              cx,
+              cz
+            );
+
+            ctx.stroke();
+
+            ctx.restore();
+
+            r.lastX =
+              r.x;
+
+            r.lastZ =
+              r.z;
+
+            st.texture.needsUpdate =
+              true;
+          }
+
+          // ----------------------------------------------------
+          // Расчёт покрытия
+          // ----------------------------------------------------
+
+          const c =
+            r.chunk;
+
+          const minGX =
+            Math.max(
+              0,
+              Math.floor(
+                Math.max(
+                  r.x -
+                    MARK_RADIUS,
+                  c.xMin
+                ) +
+                  FLOOR / 2
+              )
+            );
+
+          const maxGX =
+            Math.min(
+              GRID - 1,
+              Math.ceil(
+                Math.min(
+                  r.x +
+                    MARK_RADIUS,
+                  c.xMax
+                ) +
+                  FLOOR / 2
+              )
+            );
+
+          const minGZ =
+            Math.max(
+              0,
+              Math.floor(
+                Math.max(
+                  r.z -
+                    MARK_RADIUS,
+                  c.zMin
+                ) +
+                  FLOOR / 2
+              )
+            );
+
+          const maxGZ =
+            Math.min(
+              GRID - 1,
+              Math.ceil(
+                Math.min(
+                  r.z +
+                    MARK_RADIUS,
+                  c.zMax
+                ) +
+                  FLOOR / 2
+              )
+            );
+
+          for (
+            let gx = minGX;
+            gx <= maxGX;
+            gx++
+          ) {
+            for (
+              let gz = minGZ;
+              gz <= maxGZ;
+              gz++
             ) {
-              const idx =
-                gz * GRID + gx;
+              const wx =
+                gx -
+                FLOOR / 2 +
+                0.5;
 
-              if (!st.grid[idx]) {
-                st.grid[idx] = 1;
+              const wz =
+                gz -
+                FLOOR / 2 +
+                0.5;
 
-                st.ctx.fillStyle =
-                  PALETTE.trail;
+              if (
+                wx <
+                  c.xMin -
+                    EPS ||
+                wx >
+                  c.xMax +
+                    EPS ||
+                wz <
+                  c.zMin -
+                    EPS ||
+                wz >
+                  c.zMax +
+                    EPS
+              ) {
+                continue;
+              }
 
-                st.ctx.fillRect(
-                  gx * PX_PER_M,
-                  gz * PX_PER_M,
-                  Math.ceil(
-                    PX_PER_M
-                  ),
-                  Math.ceil(
-                    PX_PER_M
-                  )
-                );
+              if (
+                (wx - r.x) **
+                    2 +
+                  (wz - r.z) **
+                    2 <=
+                MARK_RADIUS **
+                  2
+              ) {
+                const idx =
+                  gz * GRID +
+                  gx;
 
-                newly++;
+                if (
+                  !st.grid[idx]
+                ) {
+                  st.grid[idx] =
+                    1;
+
+                  newly++;
+                }
               }
             }
           }
         }
-      }
 
-      return newly;
-    };
+        return newly;
+      };
 
     // ----------------------------------------------------------
     // Поиск коробки
     // ----------------------------------------------------------
 
-    const findWaitingBox = (a) => {
-      let best = null;
-      let bestDistance = Infinity;
+    const findWaitingBox =
+      (a) => {
+        let best = null;
+        let bestDistance =
+          Infinity;
 
-      for (const box of a.boxes) {
-        if (
-          box.userData.state !==
-          "waiting"
+        for (
+          const box of a.boxes
         ) {
-          continue;
+          if (
+            box.userData
+              .state !==
+            "waiting"
+          ) {
+            continue;
+          }
+
+          const distance =
+            Math.abs(
+              box.userData.z -
+                ARM_PICKUP_Z
+            );
+
+          if (
+            distance <
+            bestDistance
+          ) {
+            bestDistance =
+              distance;
+
+            best = box;
+          }
         }
 
-        const distance =
-          Math.abs(
-            box.userData.z -
-              ARM_PICKUP_Z
-          );
-
-        if (
-          distance <
-          bestDistance
-        ) {
-          bestDistance = distance;
-          best = box;
-        }
-      }
-
-      return best;
-    };
+        return best;
+      };
 
     // ----------------------------------------------------------
     // Входная лента
     // ----------------------------------------------------------
 
-    const advanceInputQueue = (
-      boxesSide,
-      dt,
-      rate
-    ) => {
-      const queue =
-        boxesSide.filter(
-          (b) =>
-            b.userData.state ===
-              "input" ||
-            b.userData.state ===
-              "waiting"
+    const advanceInputQueue =
+      (
+        boxesSide,
+        dt,
+        rate
+      ) => {
+        const queue =
+          boxesSide.filter(
+            (b) =>
+              b.userData
+                .state ===
+                "input" ||
+              b.userData
+                .state ===
+                "waiting"
+          );
+
+        queue.sort(
+          (a, b) =>
+            b.userData.z -
+            a.userData.z
         );
 
-      queue.sort(
-        (a, b) =>
-          b.userData.z -
-          a.userData.z
-      );
+        let limit =
+          ARM_PICKUP_Z;
 
-      let limit =
-        ARM_PICKUP_Z;
+        queue.forEach(
+          (box) => {
+            let z =
+              box.userData.z +
+              rate * dt;
 
-      queue.forEach((box) => {
-        let z =
-          box.userData.z +
-          rate * dt;
+            if (
+              z > limit
+            ) {
+              z = limit;
+            }
 
-        if (z > limit) {
-          z = limit;
-        }
+            box.userData.z =
+              z;
 
-        box.userData.z = z;
+            box.position.set(
+              -ARM_BELT_X,
+              0.82,
+              z
+            );
 
-        box.position.set(
-          -ARM_BELT_X,
-          0.82,
-          z
+            box.userData.state =
+              z >=
+              ARM_PICKUP_Z -
+                1e-3
+                ? "waiting"
+                : "input";
+
+            limit =
+              z - BOX_GAP;
+          }
         );
-
-        box.userData.state =
-          z >=
-          ARM_PICKUP_Z - 1e-3
-            ? "waiting"
-            : "input";
-
-        limit =
-          z - BOX_GAP;
-      });
-    };
+      };
 
     // ----------------------------------------------------------
     // Выходная лента
     // ----------------------------------------------------------
 
-    const advanceOutputQueue = (
-      boxesSide,
-      dt,
-      rate
-    ) => {
-      const queue =
-        boxesSide.filter(
-          (b) =>
-            b.userData.state ===
-            "output"
-        );
-
-      queue.sort(
-        (a, b) =>
-          a.userData.z -
-          b.userData.z
-      );
-
-      let limit = -Infinity;
-
-      queue.forEach((box) => {
-        let z =
-          box.userData.z +
-          rate * dt;
-
-        if (z < limit) {
-          z = limit;
-        }
-
-        box.userData.z = z;
-
-        box.position.set(
-          ARM_BELT_X,
-          0.82,
-          z
-        );
-
-        box.rotation.y +=
-          dt * 0.8;
-
-        limit =
-          z + BOX_GAP;
-
-        if (
-          box.userData.z >=
-          ARM_BELT_END_Z
-        ) {
-          box.userData.state =
-            "input";
-
-          box.userData.side = -1;
-
-          box.userData.z =
-            ARM_BELT_START_Z;
-
-          box.position.set(
-            -ARM_BELT_X,
-            0.82,
-            ARM_BELT_START_Z
+    const advanceOutputQueue =
+      (
+        boxesSide,
+        dt,
+        rate
+      ) => {
+        const queue =
+          boxesSide.filter(
+            (b) =>
+              b.userData
+                .state ===
+              "output"
           );
 
-          box.rotation.set(
-            0,
-            0,
-            0
-          );
-        }
-      });
-    };
+        queue.sort(
+          (a, b) =>
+            a.userData.z -
+            b.userData.z
+        );
+
+        let limit =
+          -Infinity;
+
+        queue.forEach(
+          (box) => {
+            let z =
+              box.userData.z +
+              rate * dt;
+
+            if (
+              z < limit
+            ) {
+              z = limit;
+            }
+
+            box.userData.z =
+              z;
+
+            box.position.set(
+              ARM_BELT_X,
+              0.82,
+              z
+            );
+
+            box.rotation.y +=
+              dt * 0.8;
+
+            limit =
+              z + BOX_GAP;
+
+            if (
+              box.userData.z >=
+              ARM_BELT_END_Z
+            ) {
+              box.userData.state =
+                "input";
+
+              box.userData.side =
+                -1;
+
+              box.userData.z =
+                ARM_BELT_START_Z;
+
+              box.position.set(
+                -ARM_BELT_X,
+                0.82,
+                ARM_BELT_START_Z
+              );
+
+              box.rotation.set(
+                0,
+                0,
+                0
+              );
+            }
+          }
+        );
+      };
 
     // ----------------------------------------------------------
     // Роборука
     // ----------------------------------------------------------
 
-    const advanceArm = (dt) => {
-      for (const a of st.arms) {
-        const cycleDuration =
-          1 /
-          Math.max(
-            armCycleHz,
-            0.001
-          );
-
-        a.phase =
-          (a.phase +
-            dt /
-              cycleDuration) %
-          1;
-
-        if (a.phase < 0) {
-          a.phase += 1;
-        }
-
-        const phase =
-          a.phase;
-
-        const goingRight =
-          phase < 0.5;
-
-        const legPhase =
-          goingRight
-            ? phase * 2
-            : (phase - 0.5) * 2;
-
-        const eased =
-          easeInOut(
-            legPhase
-          );
-
-        const ARM_RIGHT_FAR =
-          ARM_RIGHT_ANGLE +
-          Math.PI * 2;
-
-        const angle =
-          goingRight
-            ? ARM_LEFT_ANGLE +
-              (ARM_RIGHT_FAR -
-                ARM_LEFT_ANGLE) *
-                eased
-            : ARM_RIGHT_FAR -
-              (ARM_RIGHT_FAR -
-                ARM_LEFT_ANGLE) *
-                eased;
-
-        // Рука опускается ближе к коробке
-        // в момент захвата.
-        const dip =
-          Math.cos(
-            Math.PI *
-              legPhase
-          ) ** 2;
-
-        const clawY =
-          ARM_CARRY_Y +
-          (ARM_PICKUP_Y -
-            ARM_CARRY_Y) *
-            dip;
-
-        a.pivot.rotation.y =
-          angle;
-
-        a.claw.position.y =
-          clawY;
-
-        const boxes =
-          a.boxes;
-
-        if (!boxes?.length) {
-          continue;
-        }
-
-        const rate =
-          1.45 *
-          Math.max(
-            1,
-            armProd / 15
-          );
-
-        const inputSide =
-          boxes.filter(
-            (b) =>
-              b.userData.side ===
-                -1 &&
-              b.userData.state !==
-                "carried"
-          );
-
-        const outputSide =
-          boxes.filter(
-            (b) =>
-              b.userData.side ===
-                1 &&
-              b.userData.state !==
-                "carried"
-          );
-
-        advanceInputQueue(
-          inputSide,
-          dt,
-          rate
-        );
-
-        advanceOutputQueue(
-          outputSide,
-          dt,
-          rate
-        );
-
-        if (
-          a.lastGoingRight ===
-          undefined
+    const advanceArm =
+      (dt) => {
+        for (
+          const a of st.arms
         ) {
+          const cycleDuration =
+            1 /
+            Math.max(
+              armCycleHz,
+              0.001
+            );
+
+          a.phase =
+            (a.phase +
+              dt /
+                cycleDuration) %
+            1;
+
+          if (
+            a.phase < 0
+          ) {
+            a.phase += 1;
+          }
+
+          const phase =
+            a.phase;
+
+          const goingRight =
+            phase < 0.5;
+
+          const legPhase =
+            goingRight
+              ? phase * 2
+              : (phase - 0.5) *
+                2;
+
+          const eased =
+            easeInOut(
+              legPhase
+            );
+
+          const ARM_RIGHT_FAR =
+            ARM_RIGHT_ANGLE +
+            Math.PI * 2;
+
+          const angle =
+            goingRight
+              ? ARM_LEFT_ANGLE +
+                (ARM_RIGHT_FAR -
+                  ARM_LEFT_ANGLE) *
+                  eased
+              : ARM_RIGHT_FAR -
+                (ARM_RIGHT_FAR -
+                  ARM_LEFT_ANGLE) *
+                  eased;
+
+          const dip =
+            Math.cos(
+              Math.PI *
+                legPhase
+            ) ** 2;
+
+          const clawY =
+            ARM_CARRY_Y +
+            (ARM_PICKUP_Y -
+              ARM_CARRY_Y) *
+              dip;
+
+          a.pivot.rotation.y =
+            angle;
+
+          a.claw.position.y =
+            clawY;
+
+          const boxes =
+            a.boxes;
+
+          if (
+            !boxes?.length
+          ) {
+            continue;
+          }
+
+          const rate =
+            1.45 *
+            Math.max(
+              1,
+              armProd / 15
+            );
+
+          const inputSide =
+            boxes.filter(
+              (b) =>
+                b.userData
+                  .side ===
+                  -1 &&
+                b.userData
+                  .state !==
+                  "carried"
+            );
+
+          const outputSide =
+            boxes.filter(
+              (b) =>
+                b.userData
+                  .side ===
+                  1 &&
+                b.userData
+                  .state !==
+                  "carried"
+            );
+
+          advanceInputQueue(
+            inputSide,
+            dt,
+            rate
+          );
+
+          advanceOutputQueue(
+            outputSide,
+            dt,
+            rate
+          );
+
+          if (
+            a.lastGoingRight ===
+            undefined
+          ) {
+            a.lastGoingRight =
+              goingRight;
+          }
+
+          // ----------------------------------------------------
+          // Передача
+          // ----------------------------------------------------
+
+          if (
+            a.lastGoingRight &&
+            !goingRight
+          ) {
+            if (
+              a.transferBox
+            ) {
+              const box =
+                a.transferBox;
+
+              a.claw.remove(
+                box
+              );
+
+              box.userData.state =
+                "output";
+
+              box.userData.side =
+                1;
+
+              box.userData.z =
+                ARM_PICKUP_Z;
+
+              box.rotation.set(
+                0,
+                0,
+                0
+              );
+
+              box.position.set(
+                ARM_BELT_X,
+                0.82,
+                ARM_PICKUP_Z
+              );
+
+              a.group.add(
+                box
+              );
+
+              a.transferBox =
+                null;
+
+              st.opsAcc += 1;
+            }
+          }
+
+          // ----------------------------------------------------
+          // Захват
+          // ----------------------------------------------------
+
+          if (
+            !a.lastGoingRight &&
+            goingRight
+          ) {
+            if (
+              !a.transferBox
+            ) {
+              const pickupBox =
+                findWaitingBox(
+                  a
+                );
+
+              if (
+                pickupBox
+              ) {
+                a.transferBox =
+                  pickupBox;
+
+                pickupBox.userData.state =
+                  "carried";
+
+                a.claw.add(
+                  pickupBox
+                );
+
+                pickupBox.position.set(
+                  0,
+                  -0.34,
+                  0
+                );
+
+                pickupBox.rotation.set(
+                  0,
+                  0,
+                  0
+                );
+              }
+            }
+          }
+
           a.lastGoingRight =
             goingRight;
         }
-
-        // ------------------------------------------------------
-        // Передача коробки на выход
-        // ------------------------------------------------------
-
-        if (
-          a.lastGoingRight &&
-          !goingRight
-        ) {
-          if (a.transferBox) {
-            const box =
-              a.transferBox;
-
-            a.claw.remove(box);
-
-            box.userData.state =
-              "output";
-
-            box.userData.side =
-              1;
-
-            box.userData.z =
-              ARM_PICKUP_Z;
-
-            box.rotation.set(
-              0,
-              0,
-              0
-            );
-
-            box.position.set(
-              ARM_BELT_X,
-              0.82,
-              ARM_PICKUP_Z
-            );
-
-            a.group.add(box);
-
-            a.transferBox =
-              null;
-
-            st.opsAcc += 1;
-          }
-        }
-
-        // ------------------------------------------------------
-        // Захват коробки
-        // ------------------------------------------------------
-
-        if (
-          !a.lastGoingRight &&
-          goingRight
-        ) {
-          if (!a.transferBox) {
-            const pickupBox =
-              findWaitingBox(a);
-
-            if (pickupBox) {
-              a.transferBox =
-                pickupBox;
-
-              pickupBox.userData.state =
-                "carried";
-
-              a.claw.add(
-                pickupBox
-              );
-
-              pickupBox.position.set(
-                0,
-                -0.34,
-                0
-              );
-
-              pickupBox.rotation.set(
-                0,
-                0,
-                0
-              );
-            }
-          }
-        }
-
-        a.lastGoingRight =
-          goingRight;
-      }
-    };
+      };
 
     // ==========================================================
     // Render loop
     // ==========================================================
 
-    const tick = (timestamp) => {
-      st.raf =
-        requestAnimationFrame(
-          tick
+    const tick =
+      (timestamp) => {
+        st.raf =
+          requestAnimationFrame(
+            tick
+          );
+
+        st.clock.update(
+          timestamp
         );
 
-      st.clock.update(
-        timestamp
-      );
+        const realDt =
+          Math.min(
+            st.clock.getDelta(),
+            0.1
+          );
 
-      const realDt =
-        Math.min(
-          st.clock.getDelta(),
-          0.1
-        );
+        st.theta +=
+          (st.thetaTarget -
+            st.theta) *
+          0.12;
 
-      // Плавное вращение камеры.
-      st.theta +=
-        (st.thetaTarget -
-          st.theta) *
-        0.12;
+        st.updateCamera();
 
-      st.updateCamera();
+        if (running) {
+          const mult =
+            speedMult;
 
-      if (running) {
-        const mult =
-          speedMult;
+          if (
+            st.beltTexture
+          ) {
+            st.beltTexture.offset.y -=
+              0.45 *
+              realDt *
+              mult;
+          }
 
-        // Анимация конвейера.
-        if (
-          st.beltTexture
-        ) {
-          st.beltTexture.offset.y -=
-            0.45 *
-            realDt *
-            mult;
-        }
+          let newlyTotal = 0;
 
-        let newlyTotal = 0;
+          st.simAcc +=
+            realDt * mult;
 
-        st.simAcc +=
-          realDt * mult;
+          for (
+            let step = 0;
+            step < mult;
+            step++
+          ) {
+            if (
+              useVacuum
+            ) {
+              newlyTotal +=
+                advanceVacuum(
+                  realDt
+                );
+            }
 
-        for (
-          let step = 0;
-          step < mult;
-          step++
-        ) {
-          if (useVacuum) {
-            newlyTotal +=
-              advanceVacuum(
+            if (useArm) {
+              advanceArm(
                 realDt
               );
+            }
+          }
+
+          setSimSeconds(
+            st.simAcc
+          );
+
+          if (useVacuum) {
+            if (
+              newlyTotal > 0
+            ) {
+              st.texture.needsUpdate =
+                true;
+
+              let total = 0;
+
+              for (
+                let i = 0;
+                i <
+                st.grid.length;
+                i++
+              ) {
+                total +=
+                  st.grid[i];
+              }
+
+              setCoverage(
+                vacuumZoneAreaM2 >
+                  0
+                  ? Math.min(
+                      100,
+                      (total /
+                        vacuumZoneAreaM2) *
+                        100
+                    )
+                  : 0
+              );
+            }
+
+            const nowDone =
+              st.vacuums.filter(
+                (r) =>
+                  r.done
+              ).length;
+
+            if (
+              nowDone !==
+              st.lastDone
+            ) {
+              st.lastDone =
+                nowDone;
+
+              setDoneCount(
+                nowDone
+              );
+            }
           }
 
           if (useArm) {
-            advanceArm(
-              realDt
+            setOpsDone(
+              Math.floor(
+                st.opsAcc
+              )
             );
           }
         }
 
-        setSimSeconds(
-          st.simAcc
+        st.renderer.render(
+          st.scene,
+          st.camera
         );
-
-        // ------------------------------------------------------
-        // Статистика пылесосов
-        // ------------------------------------------------------
-
-        if (useVacuum) {
-          if (
-            newlyTotal > 0
-          ) {
-            st.texture.needsUpdate =
-              true;
-
-            let total = 0;
-
-            for (
-              let i = 0;
-              i <
-              st.grid.length;
-              i++
-            ) {
-              total +=
-                st.grid[i];
-            }
-
-            setCoverage(
-              vacuumZoneAreaM2 >
-                0
-                ? Math.min(
-                    100,
-                    (total /
-                      vacuumZoneAreaM2) *
-                      100
-                  )
-                : 0
-            );
-          }
-
-          const nowDone =
-            st.vacuums.filter(
-              (r) => r.done
-            ).length;
-
-          if (
-            nowDone !==
-            st.lastDone
-          ) {
-            st.lastDone =
-              nowDone;
-
-            setDoneCount(
-              nowDone
-            );
-          }
-        }
-
-        // ------------------------------------------------------
-        // Статистика роборуки
-        // ------------------------------------------------------
-
-        if (useArm) {
-          setOpsDone(
-            Math.floor(
-              st.opsAcc
-            )
-          );
-        }
-      }
-
-      // --------------------------------------------------------
-      // Render
-      // --------------------------------------------------------
-
-      st.renderer.render(
-        st.scene,
-        st.camera
-      );
-    };
+      };
 
     tick();
 
@@ -1571,31 +2189,35 @@ export default function WarehouseRoboticsSim() {
   // Controls
   // ============================================================
 
-  const rotate = (dir) => {
-    st.thetaTarget +=
-      dir *
-      (Math.PI / 2);
-  };
+  const rotate =
+    (dir) => {
+      st.thetaTarget +=
+        dir *
+        (Math.PI / 2);
+    };
 
-  const zoomBy = (delta) =>
-    setCamZoom((z) =>
-      Math.max(
-        22,
-        Math.min(
-          55,
-          z + delta
-        )
+  const zoomBy =
+    (delta) =>
+      setCamZoom(
+        (z) =>
+          Math.max(
+            22,
+            Math.min(
+              55,
+              z + delta
+            )
+          )
+      );
+
+  const fmtTime =
+    (s) =>
+      `${Math.floor(
+        s / 60
+      )}:${Math.floor(
+        s % 60
       )
-    );
-
-  const fmtTime = (s) =>
-    `${Math.floor(
-      s / 60
-    )}:${Math.floor(
-      s % 60
-    )
-      .toString()
-      .padStart(2, "0")}`;
+        .toString()
+        .padStart(2, "0")}`;
 
   const allVacuumsDone =
     useVacuum &&
@@ -1656,10 +2278,6 @@ export default function WarehouseRoboticsSim() {
         }
       `}</style>
 
-      {/* ====================================================== */}
-      {/* Header */}
-      {/* ====================================================== */}
-
       <div className="flex items-baseline justify-between mb-3 px-1">
         <div>
           <h2 className="text-xl font-bold text-[#3F4159]">
@@ -1673,38 +2291,42 @@ export default function WarehouseRoboticsSim() {
 
         <div className="flex gap-1.5">
           <button
-            onClick={() => zoomBy(6)}
+            onClick={() =>
+              zoomBy(6)
+            }
             className="w-8 h-8 rounded-full bg-white/70 hover:bg-white text-[#3F4159] font-bold shadow-sm transition"
           >
             −
           </button>
 
           <button
-            onClick={() => zoomBy(-6)}
+            onClick={() =>
+              zoomBy(-6)
+            }
             className="w-8 h-8 rounded-full bg-white/70 hover:bg-white text-[#3F4159] font-bold shadow-sm transition"
           >
             +
           </button>
 
           <button
-            onClick={() => rotate(-1)}
+            onClick={() =>
+              rotate(-1)
+            }
             className="w-8 h-8 rounded-full bg-white/70 hover:bg-white text-[#3F4159] font-bold shadow-sm transition"
           >
             ↺
           </button>
 
           <button
-            onClick={() => rotate(1)}
+            onClick={() =>
+              rotate(1)
+            }
             className="w-8 h-8 rounded-full bg-white/70 hover:bg-white text-[#3F4159] font-bold shadow-sm transition"
           >
             ↻
           </button>
         </div>
       </div>
-
-      {/* ====================================================== */}
-      {/* Mode */}
-      {/* ====================================================== */}
 
       <div className="flex gap-1.5 mb-3 px-1">
         {[
@@ -1720,26 +2342,26 @@ export default function WarehouseRoboticsSim() {
             id: "both",
             label: "Оба типа",
           },
-        ].map((opt) => (
-          <button
-            key={opt.id}
-            onClick={() =>
-              setMode(opt.id)
-            }
-            className={`text-xs px-3 py-1.5 rounded-full font-semibold transition ${
-              mode === opt.id
-                ? "bg-[#3F4159] text-white"
-                : "bg-white/60 text-[#3F4159] hover:bg-white"
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
+        ].map(
+          (opt) => (
+            <button
+              key={opt.id}
+              onClick={() =>
+                setMode(
+                  opt.id
+                )
+              }
+              className={`text-xs px-3 py-1.5 rounded-full font-semibold transition ${
+                mode === opt.id
+                  ? "bg-[#3F4159] text-white"
+                  : "bg-white/60 text-[#3F4159] hover:bg-white"
+              }`}
+            >
+              {opt.label}
+            </button>
+          )
+        )}
       </div>
-
-      {/* ====================================================== */}
-      {/* 3D */}
-      {/* ====================================================== */}
 
       <div
         ref={mountRef}
@@ -1749,15 +2371,13 @@ export default function WarehouseRoboticsSim() {
         }}
       />
 
-      {/* ====================================================== */}
-      {/* Statistics */}
-      {/* ====================================================== */}
-
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4">
         {useVacuum && (
           <Stat
             label="Отполировано"
-            value={`${coverage.toFixed(1)}%`}
+            value={`${coverage.toFixed(
+              1
+            )}%`}
           />
         )}
 
@@ -1792,20 +2412,12 @@ export default function WarehouseRoboticsSim() {
         />
       </div>
 
-      {/* ====================================================== */}
-      {/* Completion */}
-      {/* ====================================================== */}
-
       {allVacuumsDone && (
         <p className="text-xs text-[#2C6E49] font-semibold mt-2 px-1">
           🎉 Все пылесосы закончили свои участки — зона убрана на{" "}
           {coverage.toFixed(0)}%.
         </p>
       )}
-
-      {/* ====================================================== */}
-      {/* Controls */}
-      {/* ====================================================== */}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 px-1">
         {useVacuum && (
@@ -1819,7 +2431,9 @@ export default function WarehouseRoboticsSim() {
               value={vacuumCount}
               min={1}
               max={8}
-              onChange={setVacuumCount}
+              onChange={
+                setVacuumCount
+              }
             />
 
             <Slider
@@ -1828,7 +2442,9 @@ export default function WarehouseRoboticsSim() {
               min={500}
               max={6000}
               step={100}
-              onChange={setVacuumProd}
+              onChange={
+                setVacuumProd
+              }
               fmt={(v) => v}
             />
           </div>
@@ -1845,7 +2461,9 @@ export default function WarehouseRoboticsSim() {
               value={armCount}
               min={1}
               max={6}
-              onChange={setArmCount}
+              onChange={
+                setArmCount
+              }
             />
 
             <Slider
@@ -1854,21 +2472,21 @@ export default function WarehouseRoboticsSim() {
               min={5}
               max={40}
               step={1}
-              onChange={setArmProd}
+              onChange={
+                setArmProd
+              }
               fmt={(v) => v}
             />
           </div>
         )}
       </div>
 
-      {/* ====================================================== */}
-      {/* Playback */}
-      {/* ====================================================== */}
-
       <div className="flex flex-wrap gap-2 mt-4 px-1 items-center">
         <button
           onClick={() =>
-            setRunning(!running)
+            setRunning(
+              !running
+            )
           }
           className="text-sm px-4 py-2 rounded-full bg-[#E8B15A] hover:brightness-105 text-[#3F4159] font-bold shadow-sm transition"
         >
@@ -1916,7 +2534,10 @@ export default function WarehouseRoboticsSim() {
 // UI components
 // ============================================================
 
-function Stat({ label, value }) {
+function Stat({
+  label,
+  value,
+}) {
   return (
     <div className="bg-white/60 rounded-xl p-2.5">
       <div className="text-[10px] text-[#6b5f7a] font-semibold">
@@ -1943,7 +2564,10 @@ function Slider({
     <label className="text-xs block">
       <div className="flex justify-between mb-1 text-[#3F4159] font-semibold">
         <span>{label}</span>
-        <span>{fmt(value)}</span>
+
+        <span>
+          {fmt(value)}
+        </span>
       </div>
 
       <input
@@ -1992,7 +2616,9 @@ function Stepper({
               )
             )
           }
-          disabled={value <= min}
+          disabled={
+            value <= min
+          }
           className="w-8 h-8 flex-none rounded-full bg-white/80 hover:bg-white disabled:opacity-30 text-[#3F4159] font-bold shadow-sm transition flex items-center justify-center text-base"
         >
           −
@@ -2000,7 +2626,9 @@ function Stepper({
 
         <div className="flex-1 flex items-center justify-center gap-1.5">
           {Array.from(
-            { length: max },
+            {
+              length: max,
+            },
             (_, i) => (
               <span
                 key={i}
@@ -2025,7 +2653,9 @@ function Stepper({
               )
             )
           }
-          disabled={value >= max}
+          disabled={
+            value >= max
+          }
           className="w-8 h-8 flex-none rounded-full bg-white/80 hover:bg-white text-[#3F4159] font-bold shadow-sm transition flex items-center justify-center text-base"
         >
           +
@@ -2070,7 +2700,9 @@ function drawBaseFloor(
   // Зона пылесосов
   // ----------------------------------------------------------
 
-  if (vacuumZoneWidth > 0) {
+  if (
+    vacuumZoneWidth > 0
+  ) {
     vacuumChunks.forEach(
       (chunk) => {
         ctx.fillStyle =
@@ -2113,7 +2745,7 @@ function drawBaseFloor(
         );
 
         ctx.strokeStyle =
-          "rgba(255,255,255,0.3)";
+          "rgba(255,255,255,0.23)";
 
         ctx.lineWidth = 2.5;
 
@@ -2131,7 +2763,9 @@ function drawBaseFloor(
   // Зона роборуки
   // ----------------------------------------------------------
 
-  if (armZoneWidth > 0) {
+  if (
+    armZoneWidth > 0
+  ) {
     const startPx =
       ((zoneSplitX +
         FLOOR / 2) /
@@ -2189,7 +2823,7 @@ function drawBaseFloor(
   // ----------------------------------------------------------
 
   ctx.strokeStyle =
-    "rgba(255,255,255,0.055)";
+    "rgba(255,255,255,0.04)";
 
   ctx.lineWidth = 1;
 
@@ -2205,22 +2839,31 @@ function drawBaseFloor(
       i * gridStep;
 
     ctx.beginPath();
-    ctx.moveTo(p, 0);
+
+    ctx.moveTo(
+      p,
+      0
+    );
+
     ctx.lineTo(
       p,
       CANVAS_PX
     );
+
     ctx.stroke();
 
     ctx.beginPath();
+
     ctx.moveTo(
       0,
       p
     );
+
     ctx.lineTo(
       CANVAS_PX,
       p
     );
+
     ctx.stroke();
   }
 
@@ -2229,7 +2872,7 @@ function drawBaseFloor(
   // ----------------------------------------------------------
 
   ctx.strokeStyle =
-    "rgba(255,255,255,0.18)";
+    "rgba(255,255,255,0.13)";
 
   ctx.lineWidth = 3;
 
@@ -2251,46 +2894,45 @@ function makeVacuumRobot(
   const group =
     new THREE.Group();
 
-  // ----------------------------------------------------------
-  // Материалы
-  // ----------------------------------------------------------
-
   const bodyMat =
-    new THREE.MeshStandardMaterial({
-      color:
-        PALETTE.robotBody,
+    new THREE.MeshStandardMaterial(
+      {
+        color:
+          PALETTE.robotBody,
 
-      flatShading: true,
+        flatShading: true,
 
-      roughness: 0.46,
-      metalness: 0.035,
-    });
+        roughness: 0.58,
+        metalness: 0.0,
+      }
+    );
 
   const capMat =
-    new THREE.MeshStandardMaterial({
-      color: capColor,
+    new THREE.MeshStandardMaterial(
+      {
+        color: capColor,
 
-      flatShading: true,
+        flatShading: true,
 
-      roughness: 0.38,
-      metalness: 0.07,
-    });
+        roughness: 0.48,
+        metalness: 0.0,
+      }
+    );
 
   const darkMat =
-    new THREE.MeshStandardMaterial({
-      color:
-        PALETTE.storage,
+    new THREE.MeshStandardMaterial(
+      {
+        color:
+          PALETTE.storage,
 
-      flatShading: true,
+        flatShading: true,
 
-      roughness: 0.42,
-      metalness: 0.1,
-    });
+        roughness: 0.60,
+        metalness: 0.0,
+      }
+    );
 
-  // ----------------------------------------------------------
   // Нижняя юбка
-  // ----------------------------------------------------------
-
   const skirt =
     new THREE.Mesh(
       new THREE.CylinderGeometry(
@@ -2305,15 +2947,17 @@ function makeVacuumRobot(
   skirt.position.y =
     0.05;
 
-  skirt.castShadow = true;
-  skirt.receiveShadow = true;
+  skirt.castShadow =
+    true;
 
-  group.add(skirt);
+  skirt.receiveShadow =
+    true;
 
-  // ----------------------------------------------------------
+  group.add(
+    skirt
+  );
+
   // Корпус
-  // ----------------------------------------------------------
-
   const body =
     new THREE.Mesh(
       new THREE.CylinderGeometry(
@@ -2328,15 +2972,17 @@ function makeVacuumRobot(
   body.position.y =
     0.5;
 
-  body.castShadow = true;
-  body.receiveShadow = true;
+  body.castShadow =
+    true;
 
-  group.add(body);
+  body.receiveShadow =
+    true;
 
-  // ----------------------------------------------------------
+  group.add(
+    body
+  );
+
   // Купол
-  // ----------------------------------------------------------
-
   const dome =
     new THREE.Mesh(
       new THREE.SphereGeometry(
@@ -2354,15 +3000,17 @@ function makeVacuumRobot(
   dome.position.y =
     0.8;
 
-  dome.castShadow = true;
-  dome.receiveShadow = true;
+  dome.castShadow =
+    true;
 
-  group.add(dome);
+  dome.receiveShadow =
+    true;
 
-  // ----------------------------------------------------------
+  group.add(
+    dome
+  );
+
   // Глаз
-  // ----------------------------------------------------------
-
   const eye =
     new THREE.Mesh(
       new THREE.SphereGeometry(
@@ -2379,30 +3027,33 @@ function makeVacuumRobot(
     0.45
   );
 
-  eye.castShadow = true;
+  eye.castShadow =
+    true;
 
-  group.add(eye);
+  group.add(
+    eye
+  );
 
-  // ----------------------------------------------------------
-  // Светящийся декоративный обод
-  // ----------------------------------------------------------
-
+  // Декоративный обод
   const ringMat =
-    new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+    new THREE.MeshStandardMaterial(
+      {
+        color: 0xffffff,
 
-      emissive:
-        new THREE.Color(
-          capColor
-        ),
+        emissive:
+          new THREE.Color(
+            capColor
+          ),
 
-      emissiveIntensity: 0.55,
+        emissiveIntensity:
+          0.28,
 
-      roughness: 0.28,
-      metalness: 0.04,
+        roughness: 0.48,
+        metalness: 0.0,
 
-      flatShading: true,
-    });
+        flatShading: true,
+      }
+    );
 
   const ring =
     new THREE.Mesh(
@@ -2421,7 +3072,9 @@ function makeVacuumRobot(
   ring.position.y =
     0.72;
 
-  group.add(ring);
+  group.add(
+    ring
+  );
 
   return group;
 }
@@ -2437,56 +3090,57 @@ function makeArmRobot(
   const group =
     new THREE.Group();
 
-  // ----------------------------------------------------------
-  // Материалы
-  // ----------------------------------------------------------
-
   const baseMat =
-    new THREE.MeshStandardMaterial({
-      color:
-        PALETTE.robotBody,
+    new THREE.MeshStandardMaterial(
+      {
+        color:
+          PALETTE.robotBody,
 
-      flatShading: true,
+        flatShading: true,
 
-      roughness: 0.43,
-      metalness: 0.055,
-    });
+        roughness: 0.56,
+        metalness: 0.0,
+      }
+    );
 
   const accentMat =
-    new THREE.MeshStandardMaterial({
-      color: accentColor,
+    new THREE.MeshStandardMaterial(
+      {
+        color: accentColor,
 
-      flatShading: true,
+        flatShading: true,
 
-      roughness: 0.38,
-      metalness: 0.09,
-    });
+        roughness: 0.48,
+        metalness: 0.0,
+      }
+    );
 
   const darkMat =
-    new THREE.MeshStandardMaterial({
-      color:
-        PALETTE.storage,
+    new THREE.MeshStandardMaterial(
+      {
+        color:
+          PALETTE.storage,
 
-      flatShading: true,
+        flatShading: true,
 
-      roughness: 0.38,
-      metalness: 0.14,
-    });
+        roughness: 0.60,
+        metalness: 0.0,
+      }
+    );
 
   const beltMat =
-    new THREE.MeshStandardMaterial({
-      map: beltTexture,
+    new THREE.MeshStandardMaterial(
+      {
+        map: beltTexture,
 
-      flatShading: true,
+        flatShading: true,
 
-      roughness: 0.65,
-      metalness: 0.07,
-    });
+        roughness: 0.70,
+        metalness: 0.0,
+      }
+    );
 
-  // ----------------------------------------------------------
   // Основание
-  // ----------------------------------------------------------
-
   const base =
     new THREE.Mesh(
       new THREE.CylinderGeometry(
@@ -2501,15 +3155,17 @@ function makeArmRobot(
   base.position.y =
     0.55;
 
-  base.castShadow = true;
-  base.receiveShadow = true;
+  base.castShadow =
+    true;
 
-  group.add(base);
+  base.receiveShadow =
+    true;
 
-  // ----------------------------------------------------------
+  group.add(
+    base
+  );
+
   // Кольцо
-  // ----------------------------------------------------------
-
   const collar =
     new THREE.Mesh(
       new THREE.CylinderGeometry(
@@ -2524,27 +3180,28 @@ function makeArmRobot(
   collar.position.y =
     1.25;
 
-  collar.castShadow = true;
-  collar.receiveShadow = true;
+  collar.castShadow =
+    true;
 
-  group.add(collar);
+  collar.receiveShadow =
+    true;
 
-  // ----------------------------------------------------------
+  group.add(
+    collar
+  );
+
   // Pivot
-  // ----------------------------------------------------------
-
   const pivot =
     new THREE.Group();
 
   pivot.position.y =
     1.4;
 
-  group.add(pivot);
+  group.add(
+    pivot
+  );
 
-  // ----------------------------------------------------------
   // Рука
-  // ----------------------------------------------------------
-
   const arm =
     new THREE.Mesh(
       new THREE.BoxGeometry(
@@ -2558,15 +3215,17 @@ function makeArmRobot(
   arm.position.x =
     ARM_LENGTH / 2;
 
-  arm.castShadow = true;
-  arm.receiveShadow = true;
+  arm.castShadow =
+    true;
 
-  pivot.add(arm);
+  arm.receiveShadow =
+    true;
 
-  // ----------------------------------------------------------
+  pivot.add(
+    arm
+  );
+
   // Захват
-  // ----------------------------------------------------------
-
   const claw =
     new THREE.Mesh(
       new THREE.BoxGeometry(
@@ -2583,31 +3242,36 @@ function makeArmRobot(
     0
   );
 
-  claw.castShadow = true;
-  claw.receiveShadow = true;
+  claw.castShadow =
+    true;
 
-  pivot.add(claw);
+  claw.receiveShadow =
+    true;
 
-  // ----------------------------------------------------------
-  // Светящийся кончик
-  // ----------------------------------------------------------
+  pivot.add(
+    claw
+  );
 
+  // Кончик
   const tipMat =
-    new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+    new THREE.MeshStandardMaterial(
+      {
+        color: 0xffffff,
 
-      emissive:
-        new THREE.Color(
-          accentColor
-        ),
+        emissive:
+          new THREE.Color(
+            accentColor
+          ),
 
-      emissiveIntensity: 1.0,
+        emissiveIntensity:
+          0.52,
 
-      roughness: 0.23,
-      metalness: 0.04,
+        roughness: 0.45,
+        metalness: 0.0,
 
-      flatShading: true,
-    });
+        flatShading: true,
+      }
+    );
 
   const tip =
     new THREE.Mesh(
@@ -2625,12 +3289,11 @@ function makeArmRobot(
     0.27
   );
 
-  pivot.add(tip);
+  pivot.add(
+    tip
+  );
 
-  // ----------------------------------------------------------
   // Конвейеры
-  // ----------------------------------------------------------
-
   const boxes = [];
 
   [-1, 1].forEach(
@@ -2649,12 +3312,13 @@ function makeArmRobot(
           ),
           new THREE.MeshStandardMaterial(
             {
-              color: 0x202131,
+              color: 0x202236,
 
-              flatShading: true,
+              flatShading:
+                true,
 
-              roughness: 0.5,
-              metalness: 0.15,
+              roughness: 0.68,
+              metalness: 0.0,
             }
           )
         );
@@ -2665,10 +3329,15 @@ function makeArmRobot(
         0
       );
 
-      frame.castShadow = true;
-      frame.receiveShadow = true;
+      frame.castShadow =
+        true;
 
-      group.add(frame);
+      frame.receiveShadow =
+        true;
+
+      group.add(
+        frame
+      );
 
       // Лента
       const belt =
@@ -2687,10 +3356,15 @@ function makeArmRobot(
         0
       );
 
-      belt.receiveShadow = true;
-      belt.castShadow = true;
+      belt.castShadow =
+        true;
 
-      group.add(belt);
+      belt.receiveShadow =
+        true;
+
+      group.add(
+        belt
+      );
 
       // Направляющие
       [-0.58, 0.58].forEach(
@@ -2704,12 +3378,16 @@ function makeArmRobot(
               ),
               new THREE.MeshStandardMaterial(
                 {
-                  color: 0x8d91a5,
+                  color:
+                    0x85899f,
 
-                  flatShading: true,
+                  flatShading:
+                    true,
 
-                  roughness: 0.42,
-                  metalness: 0.2,
+                  roughness:
+                    0.58,
+
+                  metalness: 0.05,
                 }
               )
             );
@@ -2720,19 +3398,21 @@ function makeArmRobot(
             0
           );
 
-          rail.castShadow = true;
-          rail.receiveShadow = true;
+          rail.castShadow =
+            true;
 
-          group.add(rail);
+          rail.receiveShadow =
+            true;
+
+          group.add(
+            rail
+          );
         }
       );
     }
   );
 
-  // ----------------------------------------------------------
   // Коробки
-  // ----------------------------------------------------------
-
   const colors = [
     PALETTE.crateA,
     PALETTE.crateB,
@@ -2753,10 +3433,11 @@ function makeArmRobot(
                 colors.length
             ],
 
-          flatShading: true,
+          flatShading:
+            true,
 
-          roughness: 0.53,
-          metalness: 0.045,
+          roughness: 0.60,
+          metalness: 0.0,
         }
       );
 
@@ -2781,8 +3462,11 @@ function makeArmRobot(
       startZ
     );
 
-    box.castShadow = true;
-    box.receiveShadow = true;
+    box.castShadow =
+      true;
+
+    box.receiveShadow =
+      true;
 
     box.userData = {
       state: "input",
@@ -2794,9 +3478,13 @@ function makeArmRobot(
       transferT: 0,
     };
 
-    group.add(box);
+    group.add(
+      box
+    );
 
-    boxes.push(box);
+    boxes.push(
+      box
+    );
   }
 
   return {
