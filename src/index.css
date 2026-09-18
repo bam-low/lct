@@ -1,1 +1,37 @@
+@import url("https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&display=swap");
 @import "tailwindcss";
+
+input[type="range"].pretty-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(63, 65, 89, 0.18);
+}
+
+input[type="range"].pretty-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #e8b15a;
+  border: 2px solid #fbf3e7;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+input[type="range"].pretty-range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(63, 65, 89, 0.18);
+}
+
+input[type="range"].pretty-range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #e8b15a;
+  border: 2px solid #fbf3e7;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
