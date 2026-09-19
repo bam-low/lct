@@ -1,112 +1,42 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { FLOOR, MARGIN, LANE_MIN_X, Z_MIN, Z_MAX, computeZoneWidths } from "./layout.js";
-
-const GRID = FLOOR;
-const CANVAS_PX = 512;
-const PX_PER_M = CANVAS_PX / FLOOR;
-
-const VACUUM_SWATH = 1.5;
-const MODEL_SCALE = 1.7;
-
-// Роборуки
-const ARM_BELT_X = 2.0;
-const ARM_BELT_START_Z = -5.85;
-const ARM_BELT_END_Z = 5.85;
-const ARM_PICKUP_Z = 0;
-const ARM_LENGTH = 2.0;
-const BOX_GAP = 0.85;
-const ARM_LEFT_ANGLE = Math.PI;
-const ARM_RIGHT_ANGLE = 0;
-const ARM_PICKUP_Y = -0.92;
-const ARM_CARRY_Y = -0.15;
-
-// Насыщенная пастельная палитра
-const PALETTE = {
-  chunkA: "#E7C8C3",
-  chunkB: "#9CCBC5",
-  storage: "#37394F",
-  armZone: "#4C5070",
-  pad: "#8B78C7",
-  crateA: "#E5A13F",
-  crateB: "#C85E70",
-  crateC: "#5D9E96",
-  robotBody: "#FFF1DC",
-  vacuumCaps: ["#E5A13F", "#C85E70", "#4F9B90", "#8B78C7", "#D98279", "#E5A13F", "#C85E70", "#4F9B90"],
-  armAccents: ["#8B78C7", "#C85E70", "#4F9B90", "#E5A13F", "#8B78C7", "#C85E70"],
-  trail: "rgba(255,238,198,0.40)",
-  belt: "#292B3D",
-  beltStripe: "#D4B96F",
-};
-
-const ISO_ELEV = Math.atan(1 / Math.sqrt(2));
+import { FLOOR, LANE_MIN_X, Z_MIN, Z_MAX, computeZoneWidths } from "./layout.js";
+import {
+  GRID,
+  PALETTE,
+  VACUUM_SWATH,
+  MODEL_SCALE,
+  VACUUM_MODEL_SCALE,
+  VACUUM_HALF_WIDTH,
+  VACUUM_FLOOR_OFFSET,
+  ARM_PICKUP_Z,
+  ARM_BELT_X,
+  ARM_BELT_START_Z,
+  ARM_BELT_END_Z,
+  BOX_GAP,
+  ARM_LEFT_ANGLE,
+  ARM_RIGHT_ANGLE,
+  ARM_PICKUP_Y,
+  ARM_CARRY_Y,
+} from "./constants.js";
+import { computeChunks, buildRowCenters, easeInOut } from "./sceneUtils.js";
+import { computeArmObstacles, dodgeX } from "./obstacles.js";
+import { drawTrailSegment, fadeTrailRect, clearTrailRect, chunkToPixelRect, TRAIL_FADE_SECONDS } from "./trail.js";
+import { drawFloorBase } from "./floor.js";
+import { loadVacuumModel, makeVacuumRobot } from "./robots/vacuumRobot.js";
+import { makeArmRobot } from "./robots/armRobot.js";
+import { createWarehouseScene } from "./sceneSetup.js";
+import { Stat, RobotCountPanel } from "./SimPanels.jsx";
 
 // ============================================================
-// Утилиты
-// ============================================================
-
-function computeChunks(count, zoneWidth, zoneOffsetX) {
-  const zoneLength = Z_MAX - Z_MIN;
-  const cols = Math.max(1, Math.round(Math.sqrt((count * zoneWidth) / zoneLength)));
-  const fullRows = Math.floor(count / cols);
-  const remainder = count - fullRows * cols;
-  const totalRows = fullRows + (remainder > 0 ? 1 : 0);
-  const rowHeight = zoneLength / totalRows;
-
-  const chunks = [];
-
-  for (let row = 0; row < totalRows; row++) {
-    const colsInRow = row < fullRows ? cols : remainder;
-    if (colsInRow <= 0) continue;
-
-    const colWidth = zoneWidth / colsInRow;
-
-    for (let c = 0; c < colsInRow; c++) {
-      chunks.push({
-        xMin: zoneOffsetX + c * colWidth,
-        xMax: zoneOffsetX + (c + 1) * colWidth,
-        zMin: Z_MIN + row * rowHeight,
-        zMax: Z_MIN + (row + 1) * rowHeight,
-        row,
-        col: c,
-      });
-    }
-  }
-
-  return chunks;
-}
-
-function buildRowCenters(chunk) {
-  const width = chunk.xMax - chunk.xMin;
-  const numRows = Math.max(1, Math.ceil(width / VACUUM_SWATH));
-  const centers = [];
-
-  for (let i = 0; i < numRows; i++) {
-    let rx = chunk.xMin + VACUUM_SWATH * (i + 0.5);
-    if (rx > chunk.xMax - VACUUM_SWATH / 2) rx = chunk.xMax - VACUUM_SWATH / 2;
-    centers.push(rx);
-  }
-
-  return centers;
-}
-
-function easeInOut(t) {
-  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-}
-
-function applyColorSpace(target, isRenderer) {
-  if (isRenderer) {
-    target.outputColorSpace = THREE.SRGBColorSpace;
-  } else {
-    target.colorSpace = THREE.SRGBColorSpace;
-  }
-}
-
-// ============================================================
-// Основной компонент — управляемый (controlled): mode/counts/productivity
-// приходят из useEconomicsState, чтобы 3D-сцена и расчёт экономики никогда
-// не расходились в цифрах. Плейбек (running/скорость/камера) — внутреннее
+// Управляемый (controlled) компонент: mode/counts/productivity приходят из
+// useEconomicsState, чтобы 3D-сцена и расчёт экономики никогда не
+// расходились в цифрах. Плейбек (running/скорость/камера) — внутреннее
 // состояние сцены, на экономику не влияет.
+//
+// Сама сборка Three.js-сцены и отрисовка живут в соседних модулях
+// (sceneSetup/floor/trail/obstacles/robots) — этот файл только связывает их
+// с React-состоянием и ведёт покадровую симуляцию.
 // ============================================================
 
 export default function WarehouseScene({
@@ -115,8 +45,6 @@ export default function WarehouseScene({
   vacuumProd,
   armCount,
   armProd,
-  autoVacuumCount,
-  autoArmCount,
   onManualVacuumCountChange,
   onManualArmCountChange,
 }) {
@@ -129,8 +57,12 @@ export default function WarehouseScene({
   const [opsDone, setOpsDone] = useState(0);
   const [simSeconds, setSimSeconds] = useState(0);
   const [doneCount, setDoneCount] = useState(0);
-  const [camZoom, setCamZoom] = useState(40);
+  // Зум чуть отдалённый по умолчанию, чтобы весь пол и стеллажи помещались
+  // в кадр до того, как пользователь сам начнёт приближать/отдалять камеру.
+  const [camZoom, setCamZoom] = useState(52);
   const [speedMult, setSpeedMult] = useState(1);
+  // glb-модель пылесоса грузится асинхронно; роботов собираем только после неё.
+  const [modelState, setModelState] = useState("loading"); // 'loading' | 'ready' | 'error'
 
   const useVacuum = mode === "vacuum" || mode === "both";
   const useArm = mode === "arm" || mode === "both";
@@ -149,234 +81,28 @@ export default function WarehouseScene({
     const mount = mountRef.current;
     if (!mount) return;
 
-    const width = mount.clientWidth;
-    const height = 460;
+    const created = createWarehouseScene(mount);
 
-    const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0x77798f, 145, 245);
-
-    const hemisphereLight = new THREE.HemisphereLight(0xe9e3ff, 0x35384e, 3);
-    scene.add(hemisphereLight);
-
-    const ambientLight = new THREE.AmbientLight(0x777b9d, 0.17);
-    scene.add(ambientLight);
-
-    const keyLight = new THREE.DirectionalLight(0xffdca2, 3);
-    keyLight.position.set(38, 90, 32);
-    keyLight.castShadow = true;
-    keyLight.shadow.camera.left = -70;
-    keyLight.shadow.camera.right = 70;
-    keyLight.shadow.camera.top = 70;
-    keyLight.shadow.camera.bottom = -70;
-    keyLight.shadow.camera.near = 1;
-    keyLight.shadow.camera.far = 230;
-    keyLight.shadow.mapSize.width = 2048;
-    keyLight.shadow.mapSize.height = 2048;
-    keyLight.shadow.bias = -0.00012;
-    keyLight.shadow.normalBias = 0.035;
-    keyLight.shadow.radius = 4;
-    scene.add(keyLight);
-
-    const fillLight = new THREE.DirectionalLight(0x8498d4, 0.3);
-    fillLight.position.set(-45, 48, -42);
-    scene.add(fillLight);
-
-    const rimLight = new THREE.DirectionalLight(0xffb36f, 0.26);
-    rimLight.position.set(-25, 34, 58);
-    scene.add(rimLight);
-
-    // Текстура пола
-    const canvas = document.createElement("canvas");
-    canvas.width = CANVAS_PX;
-    canvas.height = CANVAS_PX;
-    const ctx = canvas.getContext("2d");
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.anisotropy = 8;
-    applyColorSpace(texture, false);
-
-    // Пол
-    const floorMaterial = new THREE.MeshStandardMaterial({
-      map: texture,
-      flatShading: true,
-      roughness: 0.68,
-      metalness: 0.04,
-    });
-
-    const floorTop = new THREE.Mesh(new THREE.BoxGeometry(FLOOR, 2, FLOOR), floorMaterial);
-    floorTop.position.y = -1;
-    floorTop.receiveShadow = true;
-    scene.add(floorTop);
-
-    const floorBaseMaterial = new THREE.MeshStandardMaterial({
-      color: 0x27293b,
-      flatShading: true,
-      roughness: 0.92,
-      metalness: 0.0,
-    });
-
-    const floorBase = new THREE.Mesh(new THREE.BoxGeometry(FLOOR + 6, 6, FLOOR + 6), floorBaseMaterial);
-    floorBase.position.y = -5.35;
-    floorBase.receiveShadow = true;
-    scene.add(floorBase);
-
-    // Боковые складские блоки
-    const crateColors = [PALETTE.crateA, PALETTE.crateB, PALETTE.crateC];
-
-    [-1, 1].forEach((side) => {
-      for (let i = 0; i < 5; i++) {
-        const h = 3 + ((i * 7) % 5);
-
-        const material = new THREE.MeshStandardMaterial({
-          color: crateColors[i % crateColors.length],
-          flatShading: true,
-          roughness: 0.6,
-          metalness: 0.0,
-        });
-
-        const crate = new THREE.Mesh(new THREE.BoxGeometry(MARGIN - 3, h, 6), material);
-        crate.position.set(side * (FLOOR / 2 - MARGIN / 2), h / 2, -40 + i * 18);
-        crate.castShadow = true;
-        crate.receiveShadow = true;
-        scene.add(crate);
-
-        const edge = new THREE.Mesh(
-          new THREE.BoxGeometry(MARGIN - 3.05, 0.08, 6.05),
-          new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            transparent: true,
-            opacity: 0.13,
-            roughness: 0.58,
-            metalness: 0,
-          })
-        );
-        edge.position.y = h / 2 + 0.05;
-        crate.add(edge);
-      }
-    });
-
-    // Текстура конвейеров
-    const beltCanvas = document.createElement("canvas");
-    beltCanvas.width = 128;
-    beltCanvas.height = 32;
-    const bctx = beltCanvas.getContext("2d");
-    bctx.fillStyle = PALETTE.belt;
-    bctx.fillRect(0, 0, 128, 32);
-    bctx.fillStyle = PALETTE.beltStripe;
-
-    for (let i = -32; i < 128; i += 24) {
-      bctx.beginPath();
-      bctx.moveTo(i, 32);
-      bctx.lineTo(i + 12, 0);
-      bctx.lineTo(i + 17, 0);
-      bctx.lineTo(i + 5, 32);
-      bctx.fill();
-    }
-
-    const beltTexture = new THREE.CanvasTexture(beltCanvas);
-    beltTexture.wrapS = THREE.RepeatWrapping;
-    beltTexture.wrapT = THREE.RepeatWrapping;
-    beltTexture.repeat.set(3, 1);
-    beltTexture.anisotropy = 8;
-    applyColorSpace(beltTexture, false);
-
-    // Camera
-    const camDist = 108;
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 500);
-
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true,
-      powerPreference: "high-performance",
-    });
-
-    renderer.setClearColor(0x000000, 0);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(width, height);
-    applyColorSpace(renderer, true);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.92;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    mount.appendChild(renderer.domElement);
-
-    // Groups
-    const vacuumGroup = new THREE.Group();
-    const armGroup = new THREE.Group();
-    scene.add(vacuumGroup, armGroup);
-
-    // State
-    Object.assign(st, {
-      scene,
-      renderer,
-      camera,
-      ctx,
-      texture,
-      canvas,
-      camDist,
-      beltTexture,
-      vacuumGroup,
-      armGroup,
+    Object.assign(st, created, {
       vacuums: [],
       arms: [],
+      armObstacles: [],
       clock: new THREE.Timer(),
       grid: new Uint8Array(GRID * GRID),
       raf: null,
-      theta: Math.PI / 4,
-      thetaTarget: Math.PI / 4,
       opsAcc: 0,
       simAcc: 0,
       lastDone: 0,
-      camZoom: 40,
-      keyLight,
     });
 
-    const updateCamera = () => {
-      const t = st.theta;
-      const d = st.camDist;
+    loadVacuumModel()
+      .then(() => setModelState("ready"))
+      .catch((error) => {
+        console.error("Не удалось загрузить модель пылесоса:", error);
+        setModelState("error");
+      });
 
-      camera.position.set(
-        d * Math.cos(ISO_ELEV) * Math.sin(t),
-        d * Math.sin(ISO_ELEV),
-        d * Math.cos(ISO_ELEV) * Math.cos(t)
-      );
-
-      camera.lookAt(0, 0, 0);
-    };
-
-    const applyFrustum = () => {
-      const w = mount.clientWidth;
-      const h = 460;
-      const a = w / h;
-      const hh = st.camZoom;
-
-      camera.left = -hh * a;
-      camera.right = hh * a;
-      camera.top = hh;
-      camera.bottom = -hh;
-      camera.updateProjectionMatrix();
-    };
-
-    st.updateCamera = updateCamera;
-    st.applyFrustum = applyFrustum;
-    updateCamera();
-    applyFrustum();
-
-    const onResize = () => {
-      renderer.setSize(mount.clientWidth, 460);
-      applyFrustum();
-    };
-
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      window.removeEventListener("resize", onResize);
-      cancelAnimationFrame(st.raf);
-      renderer.dispose();
-      if (renderer.domElement.parentNode === mount) {
-        mount.removeChild(renderer.domElement);
-      }
-    };
+    return () => created.dispose(st.raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -386,7 +112,7 @@ export default function WarehouseScene({
 
   useEffect(() => {
     if (!st.scene) return;
-    st.camZoom = camZoom;
+    st.cameraState.zoom = camZoom;
     st.applyFrustum();
   }, [camZoom]);
 
@@ -395,41 +121,12 @@ export default function WarehouseScene({
   // ============================================================
 
   useEffect(() => {
-    if (!st.scene) return;
+    if (!st.scene || modelState !== "ready") return;
 
     st.vacuumGroup.clear();
     st.armGroup.clear();
     st.vacuums = [];
     st.arms = [];
-
-    let vacuumChunks = [];
-
-    if (useVacuum && vacuumCount > 0) {
-      vacuumChunks = computeChunks(vacuumCount, vacuumZoneWidth, LANE_MIN_X);
-
-      vacuumChunks.forEach((chunk, i) => {
-        const rowCenters = buildRowCenters(chunk);
-        const g = makeVacuumRobot(PALETTE.vacuumCaps[i % PALETTE.vacuumCaps.length]);
-
-        g.scale.setScalar(MODEL_SCALE);
-        g.position.set(rowCenters[0], 0.5, chunk.zMin);
-        st.vacuumGroup.add(g);
-
-        st.vacuums.push({
-          group: g,
-          chunk,
-          rowCenters,
-          rowIdx: 0,
-          x: rowCenters[0],
-          z: chunk.zMin,
-          lastX: rowCenters[0],
-          lastZ: chunk.zMin,
-          dirZ: 1,
-          bob: Math.random() * 10,
-          done: false,
-        });
-      });
-    }
 
     if (useArm && armCount > 0) {
       const armX = zoneSplitX + armZoneWidth / 2;
@@ -447,10 +144,48 @@ export default function WarehouseScene({
       }
     }
 
-    st.grid.fill(0);
-    drawBaseFloor(st.ctx, { vacuumZoneWidth, armZoneWidth, zoneSplitX, armCount, vacuumChunks });
-    st.texture.needsUpdate = true;
+    // Роборуки стационарны — их препятствия для объезда считаются один раз,
+    // сразу после того, как они расставлены.
+    st.armObstacles = computeArmObstacles(st.arms);
 
+    if (useVacuum && vacuumCount > 0) {
+      const vacuumChunks = computeChunks(vacuumCount, vacuumZoneWidth, LANE_MIN_X);
+
+      vacuumChunks.forEach((chunk) => {
+        const rowCenters = buildRowCenters(chunk);
+        const g = makeVacuumRobot();
+
+        g.scale.setScalar(VACUUM_MODEL_SCALE);
+        g.position.set(rowCenters[0], VACUUM_FLOOR_OFFSET, chunk.zMin);
+        st.vacuumGroup.add(g);
+
+        st.vacuums.push({
+          group: g,
+          chunk,
+          chunkPx: chunkToPixelRect(chunk),
+          rowCenters,
+          rowIdx: 0,
+          x: rowCenters[0],
+          z: chunk.zMin,
+          lastRenderX: rowCenters[0],
+          lastZ: chunk.zMin,
+          dirZ: 1,
+          done: false,
+          fading: false,
+          fadeTime: 0,
+        });
+      });
+    }
+
+    // След — отдельный слой поверх статичного пола, чистим его при каждой
+    // пересборке, иначе старые следы останутся видны после сброса/смены режима.
+    st.trailCtx.clearRect(0, 0, st.trailCtx.canvas.width, st.trailCtx.canvas.height);
+    st.trailTexture.needsUpdate = true;
+
+    drawFloorBase(st.floorCtx, { armCount, armZoneWidth, zoneSplitX });
+    st.floorTexture.needsUpdate = true;
+
+    st.grid.fill(0);
     st.opsAcc = 0;
     st.simAcc = 0;
     st.lastDone = 0;
@@ -460,7 +195,7 @@ export default function WarehouseScene({
     setSimSeconds(0);
     setDoneCount(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, vacuumCount, armCount, resetKey]);
+  }, [mode, vacuumCount, armCount, resetKey, modelState]);
 
   // ============================================================
   // Анимация
@@ -488,58 +223,30 @@ export default function WarehouseScene({
 
             if (r.rowIdx >= r.rowCenters.length) {
               r.done = true;
+              r.fading = true;
             } else {
               r.dirZ *= -1;
               r.x = r.rowCenters[r.rowIdx];
             }
           }
 
-          r.bob += dt * 4;
-          r.group.position.set(r.x, 0.5 + Math.sin(r.bob) * 0.05, r.z);
+          // Пылесос физически чистит номинальную клетку (r.x/r.z), но
+          // визуально слегка объезжает роборуки, если те попадаются на пути —
+          // модельки не должны наезжать друг на друга.
+          const renderX = dodgeX(r.x, r.z, st.armObstacles, VACUUM_HALF_WIDTH);
+
+          r.group.position.set(renderX, VACUUM_FLOOR_OFFSET, r.z);
           r.group.rotation.y = r.dirZ > 0 ? 0 : Math.PI;
+
+          if (Math.abs(renderX - r.lastRenderX) > 0.0001 || Math.abs(r.z - r.lastZ) > 0.0001) {
+            drawTrailSegment(st.trailCtx, { x: r.lastRenderX, z: r.lastZ }, { x: renderX, z: r.z }, r.chunkPx);
+            r.lastRenderX = renderX;
+            r.lastZ = r.z;
+            st.trailTexture.needsUpdate = true;
+          }
         }
 
-        // Единый след пылесоса (полоса между предыдущей и текущей координатой)
-        if (Math.abs(r.x - r.lastX) > 0.0001 || Math.abs(r.z - r.lastZ) > 0.0001) {
-          const px = (r.lastX + FLOOR / 2) * PX_PER_M;
-          const pz = (r.lastZ + FLOOR / 2) * PX_PER_M;
-          const cx = (r.x + FLOOR / 2) * PX_PER_M;
-          const cz = (r.z + FLOOR / 2) * PX_PER_M;
-          const ctx = st.ctx;
-
-          ctx.save();
-          ctx.lineCap = "round";
-          ctx.lineJoin = "round";
-
-          ctx.strokeStyle = "rgba(255,248,225,0.22)";
-          ctx.lineWidth = VACUUM_SWATH * PX_PER_M * 0.95;
-          ctx.beginPath();
-          ctx.moveTo(px, pz);
-          ctx.lineTo(cx, cz);
-          ctx.stroke();
-
-          ctx.strokeStyle = PALETTE.trail;
-          ctx.lineWidth = VACUUM_SWATH * PX_PER_M * 0.72;
-          ctx.beginPath();
-          ctx.moveTo(px, pz);
-          ctx.lineTo(cx, cz);
-          ctx.stroke();
-
-          ctx.strokeStyle = "rgba(255,252,238,0.10)";
-          ctx.lineWidth = VACUUM_SWATH * PX_PER_M * 0.28;
-          ctx.beginPath();
-          ctx.moveTo(px, pz);
-          ctx.lineTo(cx, cz);
-          ctx.stroke();
-
-          ctx.restore();
-
-          r.lastX = r.x;
-          r.lastZ = r.z;
-          st.texture.needsUpdate = true;
-        }
-
-        // Расчёт покрытия
+        // Расчёт покрытия — по номинальной траектории, без объезда.
         const c = r.chunk;
         const minGX = Math.max(0, Math.floor(Math.max(r.x - MARK_RADIUS, c.xMin) + FLOOR / 2));
         const maxGX = Math.min(GRID - 1, Math.ceil(Math.min(r.x + MARK_RADIUS, c.xMax) + FLOOR / 2));
@@ -565,6 +272,24 @@ export default function WarehouseScene({
       }
 
       return newly;
+    };
+
+    // Как только робот заканчивает участок, его след начинает растворяться —
+    // в реальном времени, независимо от множителя скорости симуляции.
+    const updateFades = (dt) => {
+      for (const r of st.vacuums) {
+        if (!r.fading) continue;
+
+        r.fadeTime += dt;
+        fadeTrailRect(st.trailCtx, r.chunkPx, dt);
+        st.trailTexture.needsUpdate = true;
+
+        if (r.fadeTime >= TRAIL_FADE_SECONDS) {
+          clearTrailRect(st.trailCtx, r.chunkPx);
+          st.trailTexture.needsUpdate = true;
+          r.fading = false;
+        }
+      }
     };
 
     const findWaitingBox = (a) => {
@@ -702,7 +427,7 @@ export default function WarehouseScene({
       st.clock.update(timestamp);
       const realDt = Math.min(st.clock.getDelta(), 0.1);
 
-      st.theta += (st.thetaTarget - st.theta) * 0.12;
+      st.cameraState.theta += (st.cameraState.thetaTarget - st.cameraState.theta) * 0.12;
       st.updateCamera();
 
       if (running) {
@@ -720,12 +445,13 @@ export default function WarehouseScene({
           if (useArm) advanceArm(realDt);
         }
 
+        // Угасание следа — в реальном времени, один раз за кадр (не за суб-шаг).
+        updateFades(realDt);
+
         setSimSeconds(st.simAcc);
 
         if (useVacuum) {
           if (newlyTotal > 0) {
-            st.texture.needsUpdate = true;
-
             let total = 0;
             for (let i = 0; i < st.grid.length; i++) total += st.grid[i];
 
@@ -759,10 +485,10 @@ export default function WarehouseScene({
   // ============================================================
 
   const rotate = (dir) => {
-    st.thetaTarget += dir * (Math.PI / 2);
+    st.cameraState.thetaTarget += dir * (Math.PI / 2);
   };
 
-  const zoomBy = (delta) => setCamZoom((z) => Math.max(22, Math.min(55, z + delta)));
+  const zoomBy = (delta) => setCamZoom((z) => Math.max(22, Math.min(60, z + delta)));
 
   const fmtTime = (s) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
 
@@ -796,6 +522,12 @@ export default function WarehouseScene({
 
       <div ref={mountRef} className="w-full rounded-xl overflow-hidden" style={{ height: 460 }} />
 
+      {modelState === "error" && (
+        <p className="text-xs text-[#9C3B3B] font-semibold mt-2 px-1">
+          Не удалось загрузить 3D-модель пылесоса (public/models/vacuum.glb) — подробности в консоли браузера.
+        </p>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4">
         {useVacuum && <Stat label="Отполировано" value={`${coverage.toFixed(1)}%`} />}
         {useVacuum && <Stat label="Роботов закончило" value={`${doneCount}/${vacuumCount}`} />}
@@ -814,7 +546,6 @@ export default function WarehouseScene({
         {useVacuum && (
           <RobotCountPanel
             title="🧹 Пылесосы"
-            autoCount={autoVacuumCount}
             count={vacuumCount}
             prod={vacuumProd}
             prodUnit="м²/ч"
@@ -827,7 +558,6 @@ export default function WarehouseScene({
         {useArm && (
           <RobotCountPanel
             title="🦾 Роборуки"
-            autoCount={autoArmCount}
             count={armCount}
             prod={armProd * 60}
             prodUnit="оп/ч"
@@ -869,273 +599,4 @@ export default function WarehouseScene({
       </div>
     </div>
   );
-}
-
-// ============================================================
-// UI components
-// ============================================================
-
-function Stat({ label, value }) {
-  return (
-    <div className="bg-white/60 rounded-xl p-2.5">
-      <div className="text-xs text-[#6b5f7a] font-semibold">{label}</div>
-      <div className="text-lg text-[#3F4159] font-bold">{value}</div>
-    </div>
-  );
-}
-
-function RobotCountPanel({ title, autoCount, count, prod, prodUnit, onManualChange, min, max }) {
-  return (
-    <div className="bg-white/40 rounded-xl p-3 space-y-2">
-      <div className="text-sm font-bold text-[#3F4159]">{title}</div>
-
-      <div className="text-sm text-[#3F4159]">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onManualChange(Math.max(min, count - 1))}
-            disabled={count <= min}
-            className="w-7 h-7 rounded-full bg-white/80 hover:bg-white disabled:opacity-30 text-[#3F4159] font-bold shadow-sm"
-          >
-            −
-          </button>
-          <span className="font-mono w-6 text-center">{count}</span>
-          <button
-            onClick={() => onManualChange(Math.min(max, count + 1))}
-            disabled={count >= max}
-            className="w-7 h-7 rounded-full bg-white/80 hover:bg-white disabled:opacity-30 text-[#3F4159] font-bold shadow-sm"
-          >
-            +
-          </button>
-          <span className="text-[#6b5f7a] text-xs">роботов (рекомендовано: {autoCount})</span>
-        </div>
-      </div>
-
-      <div className="text-xs text-[#6b5f7a]">
-        Производительность одного робота: {prod.toFixed(0)} {prodUnit} (по выбранному решению в каталоге)
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// Пол
-// ============================================================
-
-function drawBaseFloor(ctx, { vacuumZoneWidth, armZoneWidth, zoneSplitX, armCount, vacuumChunks }) {
-  ctx.clearRect(0, 0, CANVAS_PX, CANVAS_PX);
-  ctx.fillStyle = PALETTE.storage;
-  ctx.fillRect(0, 0, CANVAS_PX, CANVAS_PX);
-
-  if (vacuumZoneWidth > 0) {
-    vacuumChunks.forEach((chunk) => {
-      ctx.fillStyle = (chunk.row + chunk.col) % 2 === 0 ? PALETTE.chunkA : PALETTE.chunkB;
-
-      const x0 = ((chunk.xMin + FLOOR / 2) / FLOOR) * CANVAS_PX;
-      const x1 = ((chunk.xMax + FLOOR / 2) / FLOOR) * CANVAS_PX;
-      const z0 = ((chunk.zMin + FLOOR / 2) / FLOOR) * CANVAS_PX;
-      const z1 = ((chunk.zMax + FLOOR / 2) / FLOOR) * CANVAS_PX;
-
-      ctx.fillRect(x0, z0, x1 - x0, z1 - z0);
-      ctx.strokeStyle = "rgba(255,255,255,0.23)";
-      ctx.lineWidth = 2.5;
-      ctx.strokeRect(x0, z0, x1 - x0, z1 - z0);
-    });
-  }
-
-  if (armZoneWidth > 0) {
-    const startPx = ((zoneSplitX + FLOOR / 2) / FLOOR) * CANVAS_PX;
-    const widthPx = (armZoneWidth / FLOOR) * CANVAS_PX;
-
-    ctx.fillStyle = PALETTE.armZone;
-    ctx.fillRect(startPx, 0, widthPx, CANVAS_PX);
-
-    const centerXpx = startPx + widthPx / 2;
-    const spacing = CANVAS_PX / Math.max(1, armCount);
-
-    ctx.fillStyle = PALETTE.pad;
-
-    for (let i = 0; i < armCount; i++) {
-      ctx.beginPath();
-      ctx.arc(centerXpx, spacing * (i + 0.5), widthPx * 0.32, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  ctx.strokeStyle = "rgba(255,255,255,0.04)";
-  ctx.lineWidth = 1;
-  const gridStep = CANVAS_PX / 10;
-
-  for (let i = 0; i <= 10; i++) {
-    const p = i * gridStep;
-
-    ctx.beginPath();
-    ctx.moveTo(p, 0);
-    ctx.lineTo(p, CANVAS_PX);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(0, p);
-    ctx.lineTo(CANVAS_PX, p);
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = "rgba(255,255,255,0.13)";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(1.5, 1.5, CANVAS_PX - 3, CANVAS_PX - 3);
-}
-
-// ============================================================
-// Vacuum Robot
-// ============================================================
-
-function makeVacuumRobot(capColor) {
-  const group = new THREE.Group();
-
-  const bodyMat = new THREE.MeshStandardMaterial({ color: PALETTE.robotBody, flatShading: true, roughness: 0.58, metalness: 0.0 });
-  const capMat = new THREE.MeshStandardMaterial({ color: capColor, flatShading: true, roughness: 0.48, metalness: 0.0 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: PALETTE.storage, flatShading: true, roughness: 0.6, metalness: 0.0 });
-
-  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.85, 0.35, 16), capMat);
-  skirt.position.y = 0.05;
-  skirt.castShadow = true;
-  skirt.receiveShadow = true;
-  group.add(skirt);
-
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.6, 0.6, 16), bodyMat);
-  body.position.y = 0.5;
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
-
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(0.5, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), capMat);
-  dome.position.y = 0.8;
-  dome.castShadow = true;
-  dome.receiveShadow = true;
-  group.add(dome);
-
-  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), darkMat);
-  eye.position.set(0, 0.85, 0.45);
-  eye.castShadow = true;
-  group.add(eye);
-
-  const ringMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    emissive: new THREE.Color(capColor),
-    emissiveIntensity: 0.28,
-    roughness: 0.48,
-    metalness: 0.0,
-    flatShading: true,
-  });
-
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.61, 0.035, 8, 32), ringMat);
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.72;
-  group.add(ring);
-
-  return group;
-}
-
-// ============================================================
-// Robotic Arm
-// ============================================================
-
-function makeArmRobot(accentColor, beltTexture) {
-  const group = new THREE.Group();
-
-  const baseMat = new THREE.MeshStandardMaterial({ color: PALETTE.robotBody, flatShading: true, roughness: 0.56, metalness: 0.0 });
-  const accentMat = new THREE.MeshStandardMaterial({ color: accentColor, flatShading: true, roughness: 0.48, metalness: 0.0 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: PALETTE.storage, flatShading: true, roughness: 0.6, metalness: 0.0 });
-  const beltMat = new THREE.MeshStandardMaterial({ map: beltTexture, flatShading: true, roughness: 0.7, metalness: 0.0 });
-
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1, 1.1, 16), baseMat);
-  base.position.y = 0.55;
-  base.castShadow = true;
-  base.receiveShadow = true;
-  group.add(base);
-
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.3, 16), accentMat);
-  collar.position.y = 1.25;
-  collar.castShadow = true;
-  collar.receiveShadow = true;
-  group.add(collar);
-
-  const pivot = new THREE.Group();
-  pivot.position.y = 1.4;
-  group.add(pivot);
-
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(ARM_LENGTH, 0.35, 0.35), accentMat);
-  arm.position.x = ARM_LENGTH / 2;
-  arm.castShadow = true;
-  arm.receiveShadow = true;
-  pivot.add(arm);
-
-  const claw = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), darkMat);
-  claw.position.set(ARM_LENGTH, ARM_CARRY_Y, 0);
-  claw.castShadow = true;
-  claw.receiveShadow = true;
-  pivot.add(claw);
-
-  const tipMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    emissive: new THREE.Color(accentColor),
-    emissiveIntensity: 0.52,
-    roughness: 0.45,
-    metalness: 0.0,
-    flatShading: true,
-  });
-
-  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 12), tipMat);
-  tip.position.set(ARM_LENGTH, ARM_CARRY_Y, 0.27);
-  pivot.add(tip);
-
-  const boxes = [];
-
-  [-1, 1].forEach((side) => {
-    const x = side * ARM_BELT_X;
-
-    const frame = new THREE.Mesh(
-      new THREE.BoxGeometry(1.45, 0.45, 12),
-      new THREE.MeshStandardMaterial({ color: 0x202236, flatShading: true, roughness: 0.68, metalness: 0.0 })
-    );
-    frame.position.set(x, 0.0, 0);
-    frame.castShadow = true;
-    frame.receiveShadow = true;
-    group.add(frame);
-
-    const belt = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.22, 11.7), beltMat);
-    belt.position.set(x, 0.32, 0);
-    belt.castShadow = true;
-    belt.receiveShadow = true;
-    group.add(belt);
-
-    [-0.58, 0.58].forEach((offset) => {
-      const rail = new THREE.Mesh(
-        new THREE.BoxGeometry(0.08, 0.35, 11.8),
-        new THREE.MeshStandardMaterial({ color: 0x85899f, flatShading: true, roughness: 0.58, metalness: 0.05 })
-      );
-      rail.position.set(x + offset, 0.48, 0);
-      rail.castShadow = true;
-      rail.receiveShadow = true;
-      group.add(rail);
-    });
-  });
-
-  const colors = [PALETTE.crateA, PALETTE.crateB, PALETTE.crateC];
-
-  for (let i = 0; i < 5; i++) {
-    const material = new THREE.MeshStandardMaterial({ color: colors[i % colors.length], flatShading: true, roughness: 0.6, metalness: 0.0 });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.68, 0.68), material);
-
-    const startZ = ARM_BELT_START_Z + 0.5 + i * BOX_GAP;
-    box.position.set(-ARM_BELT_X, 0.82, startZ);
-    box.castShadow = true;
-    box.receiveShadow = true;
-
-    box.userData = { state: "input", z: startZ, side: -1, transferT: 0 };
-
-    group.add(box);
-    boxes.push(box);
-  }
-
-  return { group, pivot, claw, boxes };
 }

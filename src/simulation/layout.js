@@ -14,13 +14,17 @@ export const Z_MAX = FLOOR / 2 - 3;
 export function computeZoneWidths(mode) {
   const usableWidth = LANE_MAX_X - LANE_MIN_X;
 
-  const vacuumZoneWidth =
-    mode === "vacuum" ? usableWidth : mode === "arm" ? 0 : usableWidth * 0.55;
+  const vacuumActive = mode === "vacuum" || mode === "both";
+  const armActive = mode === "arm" || mode === "both";
 
-  const armZoneWidth =
-    mode === "arm" ? usableWidth : mode === "vacuum" ? 0 : usableWidth * 0.45;
+  // Роборуки стационарны — у них своя полоса с конвейерами. При "both" это
+  // правые 45% пола, при "arm" — весь пол.
+  const armZoneWidth = armActive ? (mode === "both" ? usableWidth * 0.45 : usableWidth) : 0;
+  const zoneSplitX = mode === "both" ? LANE_MIN_X + usableWidth * 0.55 : LANE_MIN_X;
 
-  const zoneSplitX = LANE_MIN_X + vacuumZoneWidth;
+  // Пылесосы мобильны и убирают пол целиком, включая зону роборук — зоны
+  // описывают, где стоит стационарное оборудование, а не делят пол физически.
+  const vacuumZoneWidth = vacuumActive ? usableWidth : 0;
 
   const vacuumZoneAreaM2 = Math.round(vacuumZoneWidth * (Z_MAX - Z_MIN));
 

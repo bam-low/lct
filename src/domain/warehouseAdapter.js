@@ -224,12 +224,12 @@ export function buildSensitivityScenario({
   });
 }
 
-export function buildAllScenarios({ params, vacuumZoneAreaM2, vacuumSolution, armSolution, countsOverride }) {
-  const autoCounts = computeRobotCounts({ params, vacuumZoneAreaM2, vacuumSolution, armSolution });
-  const counts = countsOverride ?? autoCounts;
-
+// counts всегда приходит из вызывающего кода (в проекте — ручной ввод
+// пользователя, см. useEconomicsState); computeRobotCounts() остаётся
+// отдельной утилитой для тех мест, где нужна именно расчётная рекомендация
+// (например, стартовое значение или SensitivityPanel).
+export function buildAllScenarios({ params, vacuumSolution, armSolution, counts }) {
   return {
-    autoCounts,
     counts,
     baseline: buildWarehouseScenario("baseline", { params, vacuumSolution, armSolution, counts }),
     purchase: buildWarehouseScenario("purchase", { params, vacuumSolution, armSolution, counts }),

@@ -1,0 +1,62 @@
+import { FLOOR } from "./layout.js";
+
+// Текстура пола/следа — общий канвас-пиксельный масштаб сцены.
+export const CANVAS_PX = 512;
+export const PX_PER_M = CANVAS_PX / FLOOR;
+export const GRID = FLOOR;
+
+export const MODEL_SCALE = 1.7;
+
+// Пылесос — загруженная glb-модель (~1 м шириной, ~1.4 м длиной, низ на y = 0).
+// VACUUM_MODEL_SCALE — во сколько раз увеличиваем её в сцене.
+export const VACUUM_MODEL_SCALE = 3.0;
+
+// Пылесос всегда ориентирован вдоль оси Z, поэтому для объезда роборук важна
+// половина его ширины (по X).
+export const VACUUM_HALF_WIDTH = 0.5 * VACUUM_MODEL_SCALE;
+
+// Ширина захвата = ширина корпуса: белая полоса совпадает с роботом, а соседние
+// пылесосы у границ чанков не наезжают друг на друга.
+export const VACUUM_SWATH = 2 * VACUUM_HALF_WIDTH;
+
+// Прозрачность белого следа (общая для всего слоя, задаётся на материале).
+export const TRAIL_OPACITY = 0.7;
+
+// Лёгкий зазор над полом, чтобы колёса не мерцали вместе с плоскостью следа.
+export const VACUUM_FLOOR_OFFSET = 0.03;
+
+// Роборуки
+export const ARM_BELT_X = 2.0;
+export const ARM_BELT_HALF_WIDTH = 1.45 / 2;
+export const ARM_BELT_HALF_LENGTH = 6;
+export const ARM_BELT_START_Z = -5.85;
+export const ARM_BELT_END_Z = 5.85;
+export const ARM_PICKUP_Z = 0;
+export const ARM_LENGTH = 2.0;
+export const BOX_GAP = 0.85;
+export const ARM_LEFT_ANGLE = Math.PI;
+export const ARM_RIGHT_ANGLE = 0;
+export const ARM_PICKUP_Y = -0.92;
+export const ARM_CARRY_Y = -0.15;
+
+// Габариты препятствия «роборука» (основание + оба конвейера, с учётом
+// MODEL_SCALE и небольшого запаса) — чтобы пылесосы визуально объезжали
+// роборуки, а не проезжали сквозь их модельки.
+export const ARM_OBSTACLE_HALF_X = (ARM_BELT_X + ARM_BELT_HALF_WIDTH) * MODEL_SCALE + 0.5;
+export const ARM_OBSTACLE_HALF_Z = ARM_BELT_HALF_LENGTH * MODEL_SCALE + 0.5;
+
+// Насыщенная пастельная палитра
+export const PALETTE = {
+  floor: "#4C5070",
+  pad: "#8B78C7",
+  storage: "#37394F",
+  crateA: "#E5A13F",
+  crateB: "#C85E70",
+  crateC: "#5D9E96",
+  robotBody: "#FFF1DC",
+  armAccents: ["#8B78C7", "#C85E70", "#4F9B90", "#E5A13F", "#8B78C7", "#C85E70"],
+  belt: "#292B3D",
+  beltStripe: "#D4B96F",
+};
+
+export const ISO_ELEV = Math.atan(1 / Math.sqrt(2));

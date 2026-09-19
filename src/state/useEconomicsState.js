@@ -66,12 +66,11 @@ export function useEconomicsState() {
     () =>
       buildAllScenarios({
         params: state.params,
-        vacuumZoneAreaM2: zones.vacuumZoneAreaM2,
         vacuumSolution,
         armSolution,
-        countsOverride: { vacuumCount: state.manualVacuumCount, armCount: state.manualArmCount },
+        counts: { vacuumCount: state.manualVacuumCount, armCount: state.manualArmCount },
       }),
-    [state.params, state.manualVacuumCount, state.manualArmCount, zones.vacuumZoneAreaM2, vacuumSolution, armSolution]
+    [state.params, state.manualVacuumCount, state.manualArmCount, vacuumSolution, armSolution]
   );
 
   const setParam = (key, value) =>

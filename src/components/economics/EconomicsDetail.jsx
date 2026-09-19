@@ -13,7 +13,7 @@ const FORMULAS = [
 export default function EconomicsDetail({ scenario, counts }) {
   return (
     <details className="bg-white/40 rounded-xl p-4 text-sm text-[#3F4159]">
-      <summary className="font-bold cursor-pointer">Как посчитано и какие допущения приняты</summary>
+      <summary className="font-bold cursor-pointer">Методология расчётов и допущения</summary>
 
       <div className="mt-3 space-y-3">
         <div>

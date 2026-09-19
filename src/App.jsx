@@ -22,6 +22,11 @@ export default function App() {
 
   const activeScenario = eco.scenarios[eco.activeScenario];
 
+  const goTo = (next) => {
+    setScreen(next);
+    window.scrollTo(0, 0);
+  };
+
   return (
     <div
       className="min-h-screen w-full"
@@ -68,7 +73,7 @@ export default function App() {
 
             <div className="flex justify-end px-1 pt-2">
               <button
-                onClick={() => setScreen("results")}
+                onClick={() => goTo("results")}
                 className="text-base px-6 py-3 rounded-full bg-[#3F4159] hover:brightness-110 text-white font-bold shadow-sm transition"
               >
                 Перейти к расчётам →
@@ -80,7 +85,7 @@ export default function App() {
         {screen === "results" && (
           <>
             <button
-              onClick={() => setScreen("setup")}
+              onClick={() => goTo("setup")}
               className="text-sm px-4 py-2 rounded-full bg-white/70 hover:bg-white text-[#3F4159] font-bold shadow-sm transition"
             >
               ← Назад к настройкам
@@ -92,8 +97,6 @@ export default function App() {
               vacuumProd={eco.vacuumSolution?.technical.throughput ?? 0}
               armCount={eco.scenarios.counts.armCount}
               armProd={(eco.armSolution?.technical.throughput ?? 0) / 60}
-              autoVacuumCount={eco.scenarios.autoCounts.vacuumCount}
-              autoArmCount={eco.scenarios.autoCounts.armCount}
               onManualVacuumCountChange={eco.setManualVacuumCount}
               onManualArmCountChange={eco.setManualArmCount}
             />
