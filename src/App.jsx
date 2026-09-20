@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useEconomicsState } from "./state/useEconomicsState.js";
-import { getObjectType } from "./domain/objectTypes.js";
+import { getObjectType, selectOption } from "./domain/objectTypes.js";
+import { vacuumPeakDemand, armPeakDemand, loaderPeakDemand } from "./domain/warehouseAdapter.js";
 import { catalogFor } from "./domain/catalog.js";
 import WarehouseScene from "./simulation/WarehouseScene.jsx";
 import ObjectTypeSelect from "./components/economics/ObjectTypeSelect.jsx";
@@ -12,6 +13,8 @@ import EconomicsDetail from "./components/economics/EconomicsDetail.jsx";
 import SensitivityPanel from "./components/economics/SensitivityPanel.jsx";
 import VerdictNote from "./components/economics/VerdictNote.jsx";
 
+const SCENARIO_LABELS = { baseline: "без роботизации", purchase: "покупка", raas: "роботы как услуга" };
+
 export default function App() {
   const eco = useEconomicsState();
   const objectType = getObjectType(eco.objectTypeId);
@@ -21,6 +24,14 @@ export default function App() {
   const { vacuum: vacuumSolution, arm: armSolution, loader: loaderSolution } = eco.selectedSolutions;
 
   const activeScenario = eco.scenarios[eco.activeScenario];
+  const { params } = eco;
+
+  // Потребность объекта в производительности (на этаж) — с ней симуляция сверяет расчёт.
+  const demand = {
+    vacuum: vacuumPeakDemand(params, eco.vacuumZoneAreaM2),
+    arm: armPeakDemand(params) / eco.floors,
+    loader: loaderPeakDemand(params) / eco.floors,
+  };
 
   const goTo = (next) => {
     setScreen(next);
@@ -103,16 +114,33 @@ export default function App() {
               ← Назад к настройкам
             </button>
 
+            <RobotTypesSelect selected={eco.robotTypes} onSelect={eco.setRobotTypes} />
+
             <WarehouseScene
               robotTypes={eco.robotTypes}
-              floorAreaM2={eco.params.floorAreaM2}
+              floorAreaM2={params.floorAreaM2}
+              floorsCount={eco.floors}
+              workZoneShare={eco.workZoneShare}
+              scenarioLabel={SCENARIO_LABELS[eco.activeScenario]}
+              demand={demand}
               vacuumCount={eco.counts.vacuumCount}
-              vacuumProd={vacuumSolution?.technical.throughput ?? 0}
+              vacuumProd={eco.throughputs.vacuum}
               armCount={eco.counts.armCount}
-              armProd={(armSolution?.technical.throughput ?? 0) / 60}
+              armProd={eco.throughputs.arm / 60}
               loaderCount={eco.counts.loaderCount}
               loaderCapacityKg={loaderSolution?.technical.capacityKg ?? 100}
-              cargoPerHour={eco.params.requiredLoadThroughput}
+              loaderSpeedMps={(loaderSolution?.technical.speed ?? 2) * eco.speedFactor}
+              loaderThroughput={eco.throughputs.loader}
+              cargoWeightKg={params.cargoWeightKg}
+              cargoLengthCm={params.cargoLengthCm}
+              cargoWidthCm={params.cargoWidthCm}
+              cargoHeightCm={params.cargoHeightCm}
+              skuCount={params.skuCount}
+              slotsPerLane={selectOption(eco.objectTypeId, "storageType", params.storageType)?.slotsPerLane}
+              routeLengthM={params.routeLengthM}
+              cargoPerHour={params.requiredLoadThroughput}
+              outboundPerHour={params.requiredOutboundThroughput}
+              truckPayload={params.truckPayloadUnits}
               energyProfiles={eco.energyProfiles}
               onManualVacuumCountChange={eco.setManualVacuumCount}
               onManualArmCountChange={eco.setManualArmCount}
@@ -125,11 +153,20 @@ export default function App() {
               onSelectScenario={eco.setActiveScenario}
             />
 
+            {eco.currentProcess.demand > 0 && (
+              <p className="text-sm text-[#3F4159] bg-white/40 rounded-xl px-4 py-3">
+                <span className="font-bold">Текущий процесс:</span> {params.staffCount} чел × {params.manualProductivity}{" "}
+                оп/чел·ч = {Math.round(eco.currentProcess.capacity).toLocaleString("ru-RU")} оп/ч при потребности{" "}
+                {Math.round(eco.currentProcess.demand).toLocaleString("ru-RU")} оп/ч — персонал закрывает{" "}
+                {Math.round(eco.currentProcess.coveragePct)}% потребности.
+              </p>
+            )}
+
             {eco.activeScenario !== "baseline" && (
               <VerdictNote paybackYears={activeScenario.paybackYears} />
             )}
 
-            <EconomicsDetail scenario={activeScenario} counts={eco.counts} />
+            <EconomicsDetail scenario={activeScenario} counts={eco.totalCounts} floors={eco.floors} />
 
             <SensitivityPanel
               params={eco.params}

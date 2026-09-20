@@ -6,7 +6,7 @@ import { PALETTE } from "../constants.js";
 // стартовом положении камеры), вдоль южной стены. Полоса z > Z_MAX занята
 // станциями и не входит в зону уборки (см. layout.js).
 export const STATION_Z = 46.8; // центр припаркованного пылесоса
-const STATION_PITCH = 4.6;
+const STATION_PITCH = 5.2;
 const CHARGER_Z = 49.35;
 
 export const STATION_PAD_WIDTH = 4;

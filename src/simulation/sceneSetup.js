@@ -1,15 +1,20 @@
 import * as THREE from "three";
-import { FLOOR, MARGIN } from "./layout.js";
-import { CANVAS_PX, PALETTE, ISO_ELEV, TRAIL_OPACITY, SCENE_HEIGHT_PX } from "./constants.js";
+import { FLOOR } from "./layout.js";
+import { PALETTE, ISO_ELEV, SCENE_HEIGHT_PX } from "./constants.js";
 import { applyColorSpace } from "./sceneUtils.js";
-import { createWalls } from "./walls.js";
 import { createChunkLabelLayer } from "./chunkLabels.js";
+import { createFloorLevel, createSharedLevelAssets, FLOOR_PITCH } from "./floorLevel.js";
 
 const CAM_DIST = 108;
+const FOCUS_EASE = 0.12;
+const TOP_ELEVATION = 1.553; // ~89°: почти строго сверху (строго — вырожденный «вверх» камеры)
 
-// Единоразовая сборка сцены: свет, пол (два слоя — статичный + след),
-// стены, стеллажи, камера, рендерер. Возвращает всё, что нужно компоненту, чтобы
-// не пересобирать сцену на каждый ре-рендер.
+// Как выглядят «прозрачные» этажи: полупрозрачный силуэт вместо обычных материалов.
+const GHOST_OPACITY = 0.17;
+
+// Единоразовая сборка сцены: свет, основание, камера, рендерер и то, что общее
+// для всех этажей. Сами этажи (createFloorLevel) добавляются и убираются по
+// мере надобности через setLevelCount.
 export function createWarehouseScene(mount) {
   const width = mount.clientWidth;
 
@@ -18,20 +23,16 @@ export function createWarehouseScene(mount) {
 
   addLights(scene);
 
-  const floorLayer = createCanvasTexture(CANVAS_PX, CANVAS_PX);
-  const trailLayer = createCanvasTexture(CANVAS_PX, CANVAS_PX);
-
-  addFloor(scene, floorLayer.texture, trailLayer.texture);
-  addCrates(scene);
-
-  const walls = createWalls();
-  scene.add(walls.group);
-
-  // Подписи чанков, «нарисованные» на полу; сетку им задаёт WarehouseScene.
+  const shared = createSharedLevelAssets();
   const chunkLabels = createChunkLabelLayer();
-  scene.add(chunkLabels.mesh);
-
   const beltTexture = createBeltTexture();
+
+  const staticGroup = new THREE.Group(); // основание — не участвует в «прозрачном» проходе
+  addBase(staticGroup);
+  scene.add(staticGroup);
+
+  const levelsGroup = new THREE.Group();
+  scene.add(levelsGroup);
 
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 500);
 
@@ -46,26 +47,39 @@ export function createWarehouseScene(mount) {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   mount.appendChild(renderer.domElement);
 
-  const vacuumGroup = new THREE.Group();
-  const armGroup = new THREE.Group();
-  const loaderGroup = new THREE.Group();
-  scene.add(vacuumGroup, armGroup, loaderGroup);
+  const ghostMaterial = new THREE.MeshStandardMaterial({
+    color: 0xd8d0f5,
+    transparent: true,
+    opacity: GHOST_OPACITY,
+    depthWrite: false,
+    flatShading: true,
+    roughness: 0.8,
+  });
 
-  const cameraState = { theta: Math.PI / 4, thetaTarget: Math.PI / 4, zoom: 40 };
+  const levels = [];
+  // focusZ — куда смотрит камера по оси Z: со складом погрузчиков она смещена к
+  // воротам, чтобы фуры на подъезде были в кадре.
+  const cameraState = { theta: Math.PI / 4, thetaTarget: Math.PI / 4, zoom: 40, focusY: 0, focusZ: 0, focusZTarget: 0, elevation: ISO_ELEV, elevationTarget: ISO_ELEV };
 
-  const updateCamera = () => {
+  const updateCamera = (activeFloor = 0) => {
     const t = cameraState.theta;
+    const targetY = activeFloor * FLOOR_PITCH;
+    cameraState.focusY += (targetY - cameraState.focusY) * FOCUS_EASE;
+    cameraState.focusZ += (cameraState.focusZTarget - cameraState.focusZ) * FOCUS_EASE;
+    cameraState.elevation += (cameraState.elevationTarget - cameraState.elevation) * FOCUS_EASE;
+
+    const elevation = cameraState.elevation;
 
     camera.position.set(
-      CAM_DIST * Math.cos(ISO_ELEV) * Math.sin(t),
-      CAM_DIST * Math.sin(ISO_ELEV),
-      CAM_DIST * Math.cos(ISO_ELEV) * Math.cos(t)
+      CAM_DIST * Math.cos(elevation) * Math.sin(t),
+      cameraState.focusY + CAM_DIST * Math.sin(elevation),
+      cameraState.focusZ + CAM_DIST * Math.cos(elevation) * Math.cos(t)
     );
 
-    camera.lookAt(0, 0, 0);
+    camera.lookAt(0, cameraState.focusY, cameraState.focusZ);
 
-    // Две стены, ближайшие к камере, растворяются — считаем от того же угла.
-    walls.update(t);
+    // Стены, ближайшие к камере, растворяются — считаем от того же угла.
+    for (const level of levels) level.walls.update(t);
   };
 
   const applyFrustum = () => {
@@ -77,6 +91,58 @@ export function createWarehouseScene(mount) {
     camera.top = hh;
     camera.bottom = -hh;
     camera.updateProjectionMatrix();
+  };
+
+  // Ровно столько этажей, сколько нужно: лишние убираем, недостающие строим.
+  const setLevelCount = (count) => {
+    while (levels.length > count) {
+      const level = levels.pop();
+      levelsGroup.remove(level.group);
+      level.dispose();
+    }
+
+    while (levels.length < count) {
+      const level = createFloorLevel(shared, chunkLabels, levels.length);
+      levels.push(level);
+      levelsGroup.add(level.group);
+    }
+  };
+
+  // Активный этаж рисуется как обычно, остальные — полупрозрачными силуэтами:
+  // вторым проходом с подменой материала и без стен, следа и подписей.
+  const render = (activeFloor) => {
+    if (levels.length <= 1) {
+      renderer.render(scene, camera);
+      return;
+    }
+
+    renderer.autoClear = false;
+    renderer.clear();
+
+    levels.forEach((level, i) => {
+      level.group.visible = i === activeFloor;
+    });
+    renderer.render(scene, camera);
+
+    levels.forEach((level, i) => {
+      level.group.visible = i !== activeFloor;
+      level.decals.forEach((decal) => {
+        decal.visible = false;
+      });
+    });
+    staticGroup.visible = false;
+    scene.overrideMaterial = ghostMaterial;
+    renderer.render(scene, camera);
+
+    scene.overrideMaterial = null;
+    staticGroup.visible = true;
+    levels.forEach((level) => {
+      level.group.visible = true;
+      level.decals.forEach((decal) => {
+        decal.visible = true;
+      });
+    });
+    renderer.autoClear = true;
   };
 
   updateCamera();
@@ -92,8 +158,10 @@ export function createWarehouseScene(mount) {
   const dispose = (raf) => {
     window.removeEventListener("resize", onResize);
     cancelAnimationFrame(raf);
+    setLevelCount(0);
     renderer.dispose();
     chunkLabels.dispose();
+    ghostMaterial.dispose();
 
     if (renderer.domElement.parentNode === mount) {
       mount.removeChild(renderer.domElement);
@@ -104,33 +172,19 @@ export function createWarehouseScene(mount) {
     scene,
     renderer,
     camera,
-    floorCtx: floorLayer.ctx,
-    floorTexture: floorLayer.texture,
-    trailCtx: trailLayer.ctx,
-    trailTexture: trailLayer.texture,
+    levels,
+    TOP_ELEVATION,
+    floorCtx: shared.floorCtx,
+    floorTexture: shared.floorTexture,
     beltTexture,
     chunkLabels,
-    vacuumGroup,
-    armGroup,
-    loaderGroup,
     cameraState,
+    setLevelCount,
     updateCamera,
     applyFrustum,
+    render,
     dispose,
   };
-}
-
-function createCanvasTexture(w, h) {
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-
-  const ctx = canvas.getContext("2d");
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.anisotropy = 8;
-  applyColorSpace(texture, false);
-
-  return { ctx, texture };
 }
 
 function addLights(scene) {
@@ -143,12 +197,12 @@ function addLights(scene) {
   const keyLight = new THREE.DirectionalLight(0xffdca2, 3);
   keyLight.position.set(38, 90, 32);
   keyLight.castShadow = true;
-  keyLight.shadow.camera.left = -70;
-  keyLight.shadow.camera.right = 70;
-  keyLight.shadow.camera.top = 70;
-  keyLight.shadow.camera.bottom = -70;
+  keyLight.shadow.camera.left = -85;
+  keyLight.shadow.camera.right = 85;
+  keyLight.shadow.camera.top = 85;
+  keyLight.shadow.camera.bottom = -85;
   keyLight.shadow.camera.near = 1;
-  keyLight.shadow.camera.far = 230;
+  keyLight.shadow.camera.far = 260;
   keyLight.shadow.mapSize.width = 2048;
   keyLight.shadow.mapSize.height = 2048;
   keyLight.shadow.bias = -0.00012;
@@ -165,76 +219,15 @@ function addLights(scene) {
   scene.add(rimLight);
 }
 
-function addFloor(scene, floorTexture, trailTexture) {
-  const floorMaterial = new THREE.MeshStandardMaterial({
-    map: floorTexture,
-    flatShading: true,
-    roughness: 0.68,
-    metalness: 0.04,
-  });
-
-  const floorTop = new THREE.Mesh(new THREE.BoxGeometry(FLOOR, 2, FLOOR), floorMaterial);
-  floorTop.position.y = -1;
-  floorTop.receiveShadow = true;
-  scene.add(floorTop);
-
-  // Отдельный прозрачный слой поверх пола — на нём рисуется след пылесосов.
-  // Раздельный слой нужен, чтобы след можно было стереть/растворить для
-  // одного робота, не трогая статичный рисунок пола и площадки роборук.
-  const trailMaterial = new THREE.MeshBasicMaterial({
-    map: trailTexture,
-    transparent: true,
-    opacity: TRAIL_OPACITY,
-    depthWrite: false,
-    toneMapped: false, // чтобы белый оставался белым, а не серел от tone mapping
-  });
-
-  const trailPlane = new THREE.Mesh(new THREE.PlaneGeometry(FLOOR, FLOOR), trailMaterial);
-  trailPlane.rotation.x = -Math.PI / 2;
-  trailPlane.position.y = 0.02;
-  scene.add(trailPlane);
-
-  const floorBaseMaterial = new THREE.MeshStandardMaterial({
-    color: 0x27293b,
-    flatShading: true,
-    roughness: 0.92,
-    metalness: 0.0,
-  });
-
-  const floorBase = new THREE.Mesh(new THREE.BoxGeometry(FLOOR + 6, 6, FLOOR + 6), floorBaseMaterial);
+// Тёмное основание под самым нижним этажом.
+function addBase(group) {
+  const floorBase = new THREE.Mesh(
+    new THREE.BoxGeometry(FLOOR + 6, 6, FLOOR + 6),
+    new THREE.MeshStandardMaterial({ color: 0x27293b, flatShading: true, roughness: 0.92, metalness: 0.0 })
+  );
   floorBase.position.y = -5.35;
   floorBase.receiveShadow = true;
-  scene.add(floorBase);
-}
-
-function addCrates(scene) {
-  const crateColors = [PALETTE.crateA, PALETTE.crateB, PALETTE.crateC];
-
-  [-1, 1].forEach((side) => {
-    for (let i = 0; i < 5; i++) {
-      const h = 3 + ((i * 7) % 5);
-
-      const material = new THREE.MeshStandardMaterial({
-        color: crateColors[i % crateColors.length],
-        flatShading: true,
-        roughness: 0.6,
-        metalness: 0.0,
-      });
-
-      const crate = new THREE.Mesh(new THREE.BoxGeometry(MARGIN - 3, h, 6), material);
-      crate.position.set(side * (FLOOR / 2 - MARGIN / 2), h / 2, -40 + i * 18);
-      crate.castShadow = true;
-      crate.receiveShadow = true;
-      scene.add(crate);
-
-      const edge = new THREE.Mesh(
-        new THREE.BoxGeometry(MARGIN - 3.05, 0.08, 6.05),
-        new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.13, roughness: 0.58, metalness: 0 })
-      );
-      edge.position.y = h / 2 + 0.05;
-      crate.add(edge);
-    }
-  });
+  group.add(floorBase);
 }
 
 function createBeltTexture() {

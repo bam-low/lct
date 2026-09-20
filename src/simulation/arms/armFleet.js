@@ -15,6 +15,7 @@ import { easeInOut } from "../sceneUtils.js";
 import { computeArmObstacles } from "../obstacles.js";
 import { makeArmRobot } from "../robots/armRobot.js";
 import { createEnergyMeter } from "../energy.js";
+import { computeArmSlots } from "../layout.js";
 
 // ============================================================
 // Роборуки: стационарные, перекладывают коробки с входного конвейера на
@@ -22,19 +23,19 @@ import { createEnergyMeter } from "../energy.js";
 // энергию (энергопрофиль из каталога).
 //
 // armProd — оп/мин одной руки: от неё зависят скорость цикла и лент.
+// Места рук — computeArmSlots (одна линия, а при большом числе — колонки).
 // ============================================================
 
 export function createArmFleet({ group, zone, count, beltTexture, armProd, energyProfile }) {
   const cycleDuration = 1 / Math.max(armProd / 60, 0.001);
   const beltRate = 1.45 * Math.max(1, armProd / 15);
 
-  const armX = zone.xMin + zone.width / 2;
-  const spacing = (zone.zMax - zone.zMin) / count;
+  const slots = computeArmSlots(zone, count);
 
-  const arms = Array.from({ length: count }, (_, i) => {
+  const arms = slots.map((slot, i) => {
     const built = makeArmRobot(PALETTE.armAccents[i % PALETTE.armAccents.length], beltTexture);
 
-    built.group.position.set(armX, 0, zone.zMin + spacing * (i + 0.5));
+    built.group.position.set(slot.x, 0, slot.z);
     built.group.scale.setScalar(MODEL_SCALE);
     group.add(built.group);
 

@@ -1,278 +1,637 @@
+import * as THREE from "three";
 import {
-  CARGO_WEIGHT_KG,
-  FORKLIFT_SPEED_MPS,
   FORKLIFT_TURN_RATE,
   FORK_LIFT_SPEED,
   FORK_CARRY_LIFT,
   FORK_CLEARANCE,
   LOAD_SLOWDOWN,
+  TRUCK_SPEED_MPS,
 } from "../constants.js";
 import { makeForkliftRobot } from "../robots/forkliftRobot.js";
 import { createEnergyMeter } from "../energy.js";
-import { createCargoUnit, CARGO_UNIT_HEIGHT } from "./cargo.js";
+import { createCargoFactory } from "./cargo.js";
 import {
-  CORRIDOR_Z,
-  PAD_Z,
+  AISLE_ZS,
+  BAY_Z,
+  DOCK_LANES,
+  DOCK_SLOTS,
   MAX_LAYERS,
-  createGates,
-  findFreeCell,
-  findTopCell,
-  countStoredUnits,
-  storageCapacityUnits,
-} from "./loaderLayout.js";
+  HEADING_NORTH,
+  bayXOf,
+  createStorage,
+  freeSlotIndex,
+  topSlotIndex,
+  laneUnitCount,
+  laneFreeCapacity,
+  laneCapacity,
+  laneHasPickable,
+  laneAnchor,
+} from "./storageLayout.js";
+import { routeBetween, routeLength } from "./roads.js";
+import { findBlocker } from "./traffic.js";
+import { createTruckBay } from "./truckBay.js";
 
-// Курс = rotation.y; вперёд (вилы) смотрят в (sin курс, cos курс).
-const HEADING_NORTH = Math.PI; // к воротам (-z)
-const HEADING_SOUTH = 0; // вглубь полос хранения (+z)
-
-const UNIT_FALL_SPEED = 14; // ед./с — груз «спрыгивает» с борта грузовика на площадку
-const SHIP_DELAY_SECONDS = 4; // сколько разгруженный груз лежит у ворот, пока его не заберёт грузовик
 const ARRIVE_EPS = 0.02;
+const ROTATE_EPS = 0.02;
+const AIM_MIN_DISTANCE = 0.4; // ближе этого к цели погрузчик уже не доворачивает — иначе на подходе рыскал бы
+
+const UNLOAD_INTERVAL = 0.22; // с между единицами груза, выезжающими из фуры
+const FLIGHT_SECONDS = 0.9; // сколько груз летит от кузова до площадки и обратно
+const FLIGHT_ARC = 1.6;
+const OUTBOUND_WAIT_SECONDS = 20; // сколько фура ждёт недостающий груз, прежде чем уехать неполной
+const MAX_TRUCKS_WAITING = 2; // сколько фур одних ворот ждут своей очереди
+const GATE_STAGGER_SECONDS = 5; // на сколько позже первая фура приезжает к каждым следующим воротам
 
 const angleDiff = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
 
 // ============================================================
-// Погрузчики, груз, ворота и хранение — вся логика погрузки в одном месте.
+// Погрузчики, фуры и склад — вся логика погрузки в одном месте.
 //
-// У каждых ворот своё хранилище, и оно живёт по циклу:
-//   загрузка   — груз приходит к воротам, погрузчик уносит его в ячейку
-//                (до двух единиц друг на друге);
-//   разгрузка  — когда все ячейки заполнены, погрузчик возвращает груз к тем же
-//                воротам, откуда он был взят, и его забирают грузовики;
-//   когда хранилище опустело — снова загрузка.
+// Склад поделён на зоны по числу ворот (storageLayout.js). У каждых ворот свои
+// площадка, места хранения, фуры и закреплённые погрузчики — они ездят только в
+// своей зоне и потому не пересекаются с погрузчиками других ворот. Если погрузчиков
+// меньше, чем ворот, погрузчик обслуживает несколько соседних ворот подряд, и
+// зоны разных погрузчиков всё равно не пересекаются. Погрузчиков не больше, чем
+// ворот, поэтому в одной зоне никогда не работают двое.
 //
-// Рейс погрузчика: приехал к ворот (или ячейке) → подвёл вилы на нужную высоту →
-// подцепил единицу → отъехал → доехал по проезду → поставил → сдал назад.
-// Груз тяжелит погрузчик: чем больше масса относительно грузоподъёмности, тем
-// медленнее он едет (LOAD_SLOWDOWN).
+// Каждые ворота живут по циклу:
+//   загрузка   — фуры по очереди подъезжают, разом выгружают весь груз на площадку
+//                и уезжают; погрузчик развозит груз по местам хранения своей зоны,
+//                пока места не останется;
+//   разгрузка  — погрузчик возвращает груз к тем же воротам, и фуры его увозят;
+//                когда зона опустела, снова загрузка.
+//
+// Один рейс — одна единица груза; чем она тяжелее относительно грузоподъёмности,
+// тем медленнее едет погрузчик (LOAD_SLOWDOWN).
 // ============================================================
 
-export function createLoaderSystem({ group, count, capacityKg, metersPerUnit, cargoPerHour, energyProfile }) {
-  const gates = createGates();
-  const baseSpeed = FORKLIFT_SPEED_MPS / metersPerUnit; // ед. сцены/с
-  const arrivalInterval = cargoPerHour > 0 ? 3600 / cargoPerHour : Infinity;
+export function createLoaderSystem({
+  group,
+  count,
+  capacityKg,
+  cargoWeightKg,
+  speedMps,
+  metersPerUnit,
+  cargoPerHour,
+  truckPayload,
+  slotsPerLane,
+  cargo,
+  routeLengthM,
+  startDelay = 0,
+  energyProfile,
+}) {
+  const { docks } = createStorage({ slotsPerLane });
+  const cargoFactory = createCargoFactory(cargo);
+  const layerLift = (layer) => layer * cargoFactory.unitHeight;
+  const targetRouteUnits = routeLengthM / metersPerUnit; // куда стремятся развозить груз
 
-  const falling = []; // единицы, которые ещё опускаются на площадку
-  let arrivalTimer = 0;
-  let nextGate = 0;
+  const baseSpeed = speedMps / metersPerUnit; // ед. сцены/с
+  const truckSpeed = Math.min(30, Math.max(3, TRUCK_SPEED_MPS / metersPerUnit));
+  const loadRatio = Math.min(1, cargoWeightKg / capacityKg);
+
+  const dockCapacity = DOCK_LANES * DOCK_SLOTS * MAX_LAYERS;
+  const payload = Math.max(1, Math.min(dockCapacity, Math.round(truckPayload)));
+
+  // Входящий поток делится между воротами поровну.
+  const arrivalInterval = cargoPerHour > 0 ? (payload * 3600 * docks.length) / cargoPerHour : Infinity;
+
+  const gates = docks.map((dock) => ({
+    dock,
+    index: dock.index,
+    storageLanes: dock.storageLanes,
+    roadXs: [dock.x],
+    bay: createTruckBay({ group, gateX: dock.x, gateIndex: dock.index, speed: truckSpeed }),
+    mode: "loading", // 'loading' | 'unloading'
+    cycles: 0,
+    startTimer: startDelay + dock.index * GATE_STAGGER_SECONDS, // до приезда первой фуры
+    trucksWaiting: 0,
+    arrivalTimer: 0,
+    owed: 0, // сколько единиц ворот лежит на хранении
+    transfer: null, // перегрузка у ворот: { kind, ... }
+    loaders: [],
+  }));
+
+  const flights = []; // единицы, летящие между кузовом и площадкой
+  const loaders = Array.from({ length: Math.min(count, gates.length) }, (_, index) => createLoader(index));
+
+  let time = 0;
+  let receivedUnits = 0;
   let shippedUnits = 0;
+  let movedUnits = 0;
+  let routeUnitsTotal = 0; // суммарная длина маршрутов (ед. сцены) перевезённых единиц
+  let trucksIn = 0;
+  let trucksOut = 0;
 
-  const loaders = Array.from({ length: count }, (_, index) => createLoader(index));
+  addYard(group);
 
   // ----------------------------------------------------------
   // Создание
   // ----------------------------------------------------------
 
-  // Ворота делятся между погрузчиками подряд (0,1 | 2), чтобы зоны разных
-  // погрузчиков не пересекались и им не нужно было уступать друг другу.
-  function gatesOfLoader(index) {
-    return gates.filter((gate) => Math.floor((gate.index * count) / gates.length) === index);
+  // Ворота делятся между погрузчиками подряд (например, 5 ворот и 2 погрузчика:
+  // {0,1,2} и {3,4}), чтобы зоны разных погрузчиков не пересекались.
+  function gatesOfLoader(index, loaderCount) {
+    return gates.filter((gate) => Math.floor((gate.index * loaderCount) / gates.length) === index);
   }
 
   function createLoader(index) {
+    const myGates = gatesOfLoader(index, Math.min(count, gates.length));
+    const bayX = bayXOf(myGates[0].index);
     const robot = makeForkliftRobot();
-    const myGates = gatesOfLoader(index);
-    const home = myGates[0] ?? gates[0];
+    robot.setCargoDepth(cargoFactory.depth);
 
-    robot.group.position.set(home.x, 0.02, CORRIDOR_Z);
+    robot.group.position.set(bayX, 0.02, BAY_Z);
     robot.group.rotation.y = HEADING_NORTH;
     group.add(robot.group);
 
-    return {
+    const loader = {
+      id: index,
       robot,
-      // Батарею не моделируем (зарядку погрузчиков добавим позже), но энергию считаем.
       meter: createEnergyMeter(energyProfile),
       gates: myGates,
-      x: home.x,
-      z: CORRIDOR_Z,
+      roadXs: myGates.map((gate) => gate.dock.x),
+      bayX,
+      atBay: true,
+      anchor: { ai: 0, x: bayX },
+      x: bayX,
+      z: BAY_Z,
       heading: HEADING_NORTH,
       forkLift: 0,
       forkTarget: 0,
-      carried: null, // единица груза на вилах
+      carried: null,
       steps: [],
+      gateCursor: 0,
     };
+
+    for (const gate of myGates) gate.loaders.push(loader);
+
+    return loader;
+  }
+
+  // Асфальтовая площадка за воротами, по которой ездят фуры.
+  function addYard(target) {
+    const yard = new THREE.Mesh(
+      new THREE.BoxGeometry(112, 1, 66),
+      new THREE.MeshStandardMaterial({ color: 0x3b3e5a, flatShading: true, roughness: 0.95 })
+    );
+    yard.position.set(0, -0.53, -50 - 33);
+    yard.receiveShadow = true;
+    target.add(yard);
   }
 
   // ----------------------------------------------------------
-  // Поступление и отгрузка груза (позже здесь будут приезжать грузовики)
+  // Груз в полёте (из кузова на площадку и обратно)
   // ----------------------------------------------------------
 
-  const padIsFree = (gate) => !gate.pad.claimedBy && gate.pad.units.length + gate.pad.reserved < MAX_LAYERS;
+  function launch(unit, from, to, onLand) {
+    flights.push({ unit, from, to, t: 0, onLand });
+  }
 
-  function tryDeliverCargo() {
-    for (let k = 0; k < gates.length; k++) {
-      const gate = gates[(nextGate + k) % gates.length];
+  function updateFlights(dt) {
+    for (let i = flights.length - 1; i >= 0; i--) {
+      const flight = flights[i];
+      flight.t = Math.min(1, flight.t + dt / FLIGHT_SECONDS);
 
-      if (gate.mode !== "loading" || !padIsFree(gate) || !findFreeCell(gate)) continue;
+      const { t, from, to } = flight;
+      flight.unit.position.set(
+        from.x + (to.x - from.x) * t,
+        from.y + (to.y - from.y) * t + FLIGHT_ARC * 4 * t * (1 - t),
+        from.z + (to.z - from.z) * t
+      );
 
-      const layer = gate.pad.units.length;
-      const unit = createCargoUnit();
-      unit.position.set(gate.x, layer * CARGO_UNIT_HEIGHT + 6, PAD_Z);
+      if (t >= 1) {
+        flights.splice(i, 1);
+        flight.onLand();
+      }
+    }
+  }
+
+  // ----------------------------------------------------------
+  // Остатки на площадке и в хранении одних ворот
+  // ----------------------------------------------------------
+
+  const dockUnits = (gate) => gate.dock.lanes.reduce((sum, lane) => sum + laneUnitCount(lane), 0);
+  const dockFreeCapacity = (gate) => gate.dock.lanes.reduce((sum, lane) => sum + laneFreeCapacity(lane), 0);
+  const storageFreeCapacity = (gate) => gate.storageLanes.reduce((sum, lane) => sum + laneFreeCapacity(lane), 0);
+  const storageUnits = (gate) => gate.storageLanes.reduce((sum, lane) => sum + laneUnitCount(lane), 0);
+
+  // ----------------------------------------------------------
+  // Фуры у ворот
+  // ----------------------------------------------------------
+
+  // Пора ли отправлять за грузом фуру: набралась полная фура или больше груза
+  // этих ворот на хранении не осталось.
+  function outboundReady(gate) {
+    const units = dockUnits(gate);
+    return units > 0 && (units >= payload || gate.owed === 0);
+  }
+
+  function updateDispatch(gate, dt) {
+    if (gate.startTimer > 0) {
+      gate.startTimer -= dt;
+      if (gate.startTimer <= 0) gate.trucksWaiting = 1;
+    }
+
+    if (gate.mode === "loading" && gate.startTimer <= 0) {
+      gate.arrivalTimer += dt;
+
+      if (gate.arrivalTimer >= arrivalInterval) {
+        gate.arrivalTimer -= arrivalInterval;
+        gate.trucksWaiting = Math.min(MAX_TRUCKS_WAITING, gate.trucksWaiting + 1);
+      }
+    }
+
+    if (gate.bay.busy) return;
+
+    if (gate.mode === "loading" && gate.trucksWaiting > 0 && storageFreeCapacity(gate) > 0 && dockFreeCapacity(gate) >= payload) {
+      gate.bay.begin("inbound");
+      gate.trucksWaiting--;
+    } else if (gate.mode === "unloading" && outboundReady(gate)) {
+      gate.bay.begin("outbound");
+    }
+  }
+
+  // Полоса площадки, куда можно выгрузить очередную единицу: свободная, не занятая
+  // погрузчиком, с наибольшим запасом места — так груз ложится по всем полосам поровну.
+  function dockLaneForIncoming(gate) {
+    let best = null;
+
+    for (const lane of gate.dock.lanes) {
+      if ((lane.claimedBy && lane.claimedBy !== gate.bay) || laneFreeCapacity(lane) === 0) continue;
+      if (!best || laneFreeCapacity(lane) > laneFreeCapacity(best)) best = lane;
+    }
+
+    return best;
+  }
+
+  function startTransfer(gate) {
+    gate.transfer = { kind: gate.bay.kind, remaining: payload, timer: 0, inFlight: 0, taken: 0, waited: 0, claimed: new Set() };
+  }
+
+  function finishTransfer(gate) {
+    const { transfer } = gate;
+
+    for (const lane of transfer.claimed) {
+      if (lane.claimedBy === gate.bay) lane.claimedBy = null;
+    }
+
+    if (transfer.kind === "inbound") trucksIn++;
+    else trucksOut++;
+
+    gate.transfer = null;
+    gate.bay.depart();
+  }
+
+  function stepInbound(gate, dt) {
+    const { transfer, bay } = gate;
+
+    transfer.timer -= dt;
+
+    while (transfer.timer <= 0 && transfer.remaining > 0) {
+      const lane = dockLaneForIncoming(gate);
+      if (!lane) break; // все полосы заняты погрузчиком — ждём
+
+      lane.claimedBy = bay;
+      transfer.claimed.add(lane);
+
+      const slot = lane.slots[freeSlotIndex(lane)];
+      const layer = slot.units.length + slot.reserved;
+      slot.reserved++;
+
+      const unit = cargoFactory.create();
+      unit.userData.origin = gate.index;
       group.add(unit);
 
-      gate.pad.units.push(unit);
-      falling.push({ unit, targetY: layer * CARGO_UNIT_HEIGHT });
+      const door = bay.doorway();
+      transfer.inFlight++;
+      transfer.remaining--;
+      transfer.timer += UNLOAD_INTERVAL;
+      receivedUnits++;
 
-      nextGate = (gate.index + 1) % gates.length;
-      return true;
+      launch(unit, { x: door.x, y: door.y, z: door.z }, { x: lane.x, y: layerLift(layer), z: slot.z }, () => {
+        slot.reserved--;
+        slot.units.push(unit);
+        transfer.inFlight--;
+      });
     }
 
-    return false;
+    if (transfer.remaining === 0 && transfer.inFlight === 0) finishTransfer(gate);
   }
 
-  function updateArrivals(dt) {
-    arrivalTimer = Math.min(arrivalTimer + dt, arrivalInterval);
+  const takeableDockLanes = (gate) => gate.dock.lanes.filter((l) => (!l.claimedBy || l.claimedBy === gate.bay) && laneHasPickable(l));
 
-    if (arrivalTimer >= arrivalInterval && tryDeliverCargo()) {
-      arrivalTimer = 0;
+  function stepOutbound(gate, dt) {
+    const { transfer, bay } = gate;
+
+    transfer.timer -= dt;
+
+    while (transfer.timer <= 0 && transfer.taken < payload) {
+      const lane = takeableDockLanes(gate).sort((a, b) => laneUnitCount(b) - laneUnitCount(a))[0];
+      if (!lane) break;
+
+      lane.claimedBy = bay;
+      transfer.claimed.add(lane);
+
+      const slot = lane.slots[topSlotIndex(lane)];
+      const layer = slot.units.length - 1;
+      const unit = slot.units.pop();
+      const door = bay.doorway();
+
+      transfer.inFlight++;
+      transfer.taken++;
+      transfer.waited = 0;
+      transfer.timer += UNLOAD_INTERVAL;
+
+      launch(unit, { x: lane.x, y: layerLift(layer), z: slot.z }, { x: door.x, y: door.y, z: door.z }, () => {
+        group.remove(unit);
+        shippedUnits++;
+        transfer.inFlight--;
+      });
     }
 
-    for (let i = falling.length - 1; i >= 0; i--) {
-      const item = falling[i];
-      item.unit.position.y = Math.max(item.targetY, item.unit.position.y - UNIT_FALL_SPEED * dt);
+    if (transfer.inFlight > 0) return;
 
-      if (item.unit.position.y <= item.targetY) falling.splice(i, 1);
+    // Фура уезжает полной. Если груза пока не хватает (его ещё несёт погрузчик),
+    // она ждёт, но не дольше OUTBOUND_WAIT_SECONDS, а когда везти больше нечего —
+    // уезжает сразу.
+    const full = transfer.taken >= payload;
+    const canTakeMore = takeableDockLanes(gate).length > 0;
+    const loaderBusy = gate.dock.lanes.some((l) => l.claimedBy && l.claimedBy !== bay);
+
+    if (full || (gate.owed === 0 && !loaderBusy && !canTakeMore)) {
+      finishTransfer(gate);
+      return;
+    }
+
+    if (!canTakeMore) {
+      transfer.waited += dt;
+      if (transfer.waited > OUTBOUND_WAIT_SECONDS) finishTransfer(gate);
     }
   }
 
-  // Разгруженный груз лежит на площадке, пока его не заберёт грузовик, —
-  // забирают сверху вниз.
-  function updateShipping(gate, dt) {
-    const { units } = gate.pad;
-    const top = units[units.length - 1];
+  function updateBay(gate, dt) {
+    gate.bay.update(dt);
 
-    if (gate.mode !== "unloading" || !top || gate.pad.claimedBy) return;
+    if (gate.bay.docked && !gate.transfer) startTransfer(gate);
+    if (!gate.transfer) return;
 
-    top.userData.shipTimer = (top.userData.shipTimer ?? SHIP_DELAY_SECONDS) - dt;
-
-    if (top.userData.shipTimer <= 0) {
-      group.remove(top);
-      units.pop();
-      shippedUnits++;
-    }
+    if (gate.transfer.kind === "inbound") stepInbound(gate, dt);
+    else stepOutbound(gate, dt);
   }
 
-  // Смена фаз хранилища: заполнено → разгрузка, опустело → загрузка. Остаток
-  // груза на площадке при переходе к разгрузке просто уезжает с грузовиком.
+  // ----------------------------------------------------------
+  // Фазы ворот
+  // ----------------------------------------------------------
+
+  const carriedFor = (gate) => gate.loaders.some((loader) => loader.carried?.userData.origin === gate.index);
+
   function updateMode(gate) {
-    if (gate.busy || gate.pad.reserved > 0) return;
-
-    if (gate.mode === "loading" && !findFreeCell(gate)) {
+    if (gate.mode === "loading" && storageFreeCapacity(gate) === 0 && gate.bay.kind !== "inbound") {
       gate.mode = "unloading";
-    } else if (gate.mode === "unloading" && countStoredUnits(gate) === 0 && gate.pad.units.length === 0) {
+      gate.trucksWaiting = 0;
+      gate.arrivalTimer = 0;
+      return;
+    }
+
+    const nothingLeft = storageUnits(gate) === 0 && !carriedFor(gate) && dockUnits(gate) === 0 && !gate.bay.busy;
+
+    if (gate.mode === "unloading" && nothingLeft) {
       gate.mode = "loading";
       gate.cycles++;
+      gate.trucksWaiting = 1;
     }
   }
 
   // ----------------------------------------------------------
-  // Задания: цепочки шагов
+  // Задания погрузчикам: цепочки шагов
   // ----------------------------------------------------------
 
   const drive = (x, z, reverse = false) => ({ kind: "drive", x, z, reverse });
   const face = (heading) => ({ kind: "face", heading });
   const fork = (lift) => ({ kind: "fork", lift });
-  const layerLift = (layer) => layer * CARGO_UNIT_HEIGHT;
+  const waitFork = () => ({ kind: "waitFork" });
+  const act = (run) => ({ kind: "act", run });
 
-  // Груз с площадки ворот → в ячейку (верхняя единица площадки → следующий слой ячейки).
-  function buildLoadJob(loader, gate, cell) {
-    const carryZ = loader.robot.carry.position.z;
-    const padLayer = gate.pad.units.length - 1;
-    const { lane, slot, layer } = cell;
+  const routeSteps = (loader, from, to) => routeBetween(from, to, loader.roadXs).map((p) => drive(p.x, p.z));
+
+  const goTo = (anchor) =>
+    act((loader) => {
+      loader.anchor = anchor;
+    });
+
+  // Со стоянки погрузчик сначала выезжает задом на ось проезда H0 — разворачиваться
+  // прямо на стоянке нельзя, рядом стоит груз площадки.
+  function leaveBaySteps(loader) {
+    if (!loader.atBay) return [];
 
     return [
-      drive(gate.x, CORRIDOR_Z),
-      face(HEADING_NORTH),
-      fork(layerLift(padLayer)),
-      drive(gate.x, PAD_Z + carryZ),
-      { kind: "pickFromPad", gate },
-      fork(layerLift(padLayer) + FORK_CLEARANCE),
-      drive(gate.x, CORRIDOR_Z, true),
-      { kind: "releasePad", gate },
-      fork(FORK_CARRY_LIFT),
-      drive(lane.x, CORRIDOR_Z),
-      face(HEADING_SOUTH),
-      fork(layerLift(layer) + FORK_CLEARANCE),
-      drive(lane.x, slot.z - carryZ),
-      fork(layerLift(layer)),
-      { kind: "putInCell", lane, slot, layer },
-      drive(lane.x, CORRIDOR_Z, true),
-      { kind: "finish", gate },
+      act(() => {
+        loader.atBay = false;
+      }),
+      drive(loader.bayX, AISLE_ZS[0], true),
     ];
   }
 
-  // Груз из ячейки → на площадку тех же ворот (верхняя единица ячейки → следующий слой площадки).
-  function buildUnloadJob(loader, gate, cell, padLayer) {
+  // Заезд в полосу, подбор единицы и выезд обратно на проезд.
+  function pickSteps(loader, lane, slot, layer) {
     const carryZ = loader.robot.carry.position.z;
-    const { lane, slot, layer } = cell;
 
     return [
-      drive(lane.x, CORRIDOR_Z),
-      face(HEADING_SOUTH),
       fork(layerLift(layer)),
-      drive(lane.x, slot.z - carryZ),
-      { kind: "pickFromCell", slot },
+      face(lane.heading),
+      waitFork(),
+      drive(lane.x, slot.z - lane.dir * carryZ),
+      act(() => takeUnit(loader, slot.units.pop())),
       fork(layerLift(layer) + FORK_CLEARANCE),
-      drive(lane.x, CORRIDOR_Z, true),
+      drive(lane.x, lane.aisleZ, true),
+      act(() => {
+        lane.claimedBy = null;
+      }),
       fork(FORK_CARRY_LIFT),
-      drive(gate.x, CORRIDOR_Z),
-      face(HEADING_NORTH),
-      fork(layerLift(padLayer) + FORK_CLEARANCE),
-      drive(gate.x, PAD_Z + carryZ),
-      fork(layerLift(padLayer)),
-      { kind: "putOnPad", gate },
-      drive(gate.x, CORRIDOR_Z, true),
-      { kind: "releasePad", gate },
-      { kind: "finish", gate },
     ];
   }
 
-  // Ищет погрузчику работу среди его ворот: сначала загрузка (груз ждёт у
-  // ворот), потом разгрузка.
+  // Заезд в полосу, установка единицы и выезд обратно.
+  function putSteps(loader, lane, slot, layer, onPut) {
+    const carryZ = loader.robot.carry.position.z;
+
+    return [
+      fork(layerLift(layer) + FORK_CLEARANCE),
+      face(lane.heading),
+      waitFork(),
+      drive(lane.x, slot.z - lane.dir * carryZ),
+      fork(layerLift(layer)),
+      waitFork(),
+      act(() => {
+        const unit = placeUnit(loader, lane.x, layer, slot.z);
+        slot.reserved--;
+        slot.units.push(unit);
+        onPut(unit);
+      }),
+      drive(lane.x, lane.aisleZ, true),
+      act(() => {
+        lane.claimedBy = null;
+      }),
+      fork(FORK_CLEARANCE),
+    ];
+  }
+
+  // Общая цепочка: взять единицу с полосы from, довезти до полосы to и поставить.
+  function buildTransferJob(loader, from, to, onPut) {
+    const fromSlot = from.slots[topSlotIndex(from)];
+    const fromLayer = fromSlot.units.length - 1;
+
+    const toSlot = to.slots[freeSlotIndex(to)];
+    const toLayer = toSlot.units.length + toSlot.reserved;
+
+    from.claimedBy = loader;
+    to.claimedBy = loader;
+    toSlot.reserved++;
+
+    return [
+      ...leaveBaySteps(loader),
+      ...routeSteps(loader, loader.anchor, laneAnchor(from)),
+      goTo(laneAnchor(from)),
+      ...pickSteps(loader, from, fromSlot, fromLayer),
+      ...routeSteps(loader, laneAnchor(from), laneAnchor(to)),
+      goTo(laneAnchor(to)),
+      ...putSteps(loader, to, toSlot, toLayer, onPut),
+      act(() => {
+        movedUnits++;
+        routeUnitsTotal += routeLength(laneAnchor(from), laneAnchor(to), loader.roadXs);
+      }),
+    ];
+  }
+
+  // Полоса площадки, откуда взять груз в хранение: самая полная.
+  function pickDockLaneToStore(gate) {
+    return gate.dock.lanes
+      .filter((lane) => !lane.claimedBy && laneHasPickable(lane))
+      .sort((a, b) => laneUnitCount(b) - laneUnitCount(a))[0];
+  }
+
+  // Свободная полоса хранения зоны, маршрут до которой ближе всего к заданной
+  // средней протяжённости (routeLengthM).
+  function pickStorageLane(gate, from) {
+    let best = null;
+    let bestScore = Infinity;
+
+    for (const lane of gate.storageLanes) {
+      if (lane.claimedBy || laneFreeCapacity(lane) === 0) continue;
+
+      const score = Math.abs(routeLength(laneAnchor(from), laneAnchor(lane), [gate.dock.x]) - targetRouteUnits);
+
+      if (score < bestScore) {
+        bestScore = score;
+        best = lane;
+      }
+    }
+
+    return best;
+  }
+
+  // Что вернуть на площадку: единица на верху ближайшей полосы хранения зоны.
+  function pickRetrieve(loader, gate) {
+    const target = gate.dock.lanes
+      .filter((lane) => !lane.claimedBy && laneFreeCapacity(lane) > 0)
+      .sort((a, b) => laneFreeCapacity(b) - laneFreeCapacity(a))[0];
+
+    if (!target) return null;
+
+    let best = null;
+    let bestDistance = Infinity;
+
+    for (const lane of gate.storageLanes) {
+      if (lane.claimedBy || !laneHasPickable(lane)) continue;
+
+      const distance = routeLength(loader.anchor, laneAnchor(lane), loader.roadXs);
+
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = lane;
+      }
+    }
+
+    return best && { from: best, to: target };
+  }
+
+  function buildParkSteps(loader) {
+    const bayAnchor = { ai: 0, x: loader.bayX };
+
+    return [
+      ...routeSteps(loader, loader.anchor, bayAnchor),
+      goTo(bayAnchor),
+      drive(loader.bayX, BAY_Z),
+      face(HEADING_NORTH),
+      act(() => {
+        loader.atBay = true;
+      }),
+    ];
+  }
+
+  // Ищет работу в своих воротах (по кругу, чтобы обслуживать их поровну); без
+  // работы едет на стоянку.
   function assignJob(loader) {
-    const free = loader.gates.filter((gate) => !gate.busy && !gate.pad.claimedBy);
+    for (let k = 0; k < loader.gates.length; k++) {
+      const gate = loader.gates[(loader.gateCursor + k) % loader.gates.length];
 
-    const toLoad = free.find((gate) => gate.mode === "loading" && gate.pad.units.length > 0 && findFreeCell(gate));
+      if (gate.mode === "loading") {
+        const from = pickDockLaneToStore(gate);
+        const to = from && storageFreeCapacity(gate) > 0 ? pickStorageLane(gate, from) : null;
 
-    if (toLoad) {
-      const cell = findFreeCell(toLoad);
+        if (from && to) {
+          const origin = from.slots[topSlotIndex(from)].units.at(-1).userData.origin;
 
-      toLoad.busy = true;
-      toLoad.pad.claimedBy = loader;
-      cell.slot.busy = true;
-      loader.steps = buildLoadJob(loader, toLoad, cell);
-      return;
+          loader.steps = buildTransferJob(loader, from, to, () => {
+            gates[origin].owed++;
+          });
+          loader.gateCursor = (loader.gateCursor + k + 1) % loader.gates.length;
+          return;
+        }
+      } else {
+        const job = pickRetrieve(loader, gate);
+
+        if (job) {
+          loader.steps = buildTransferJob(loader, job.from, job.to, () => {
+            gate.owed--;
+          });
+          loader.gateCursor = (loader.gateCursor + k + 1) % loader.gates.length;
+          return;
+        }
+      }
     }
 
-    const toUnload = free.find((gate) => gate.mode === "unloading" && padIsFree(gate) && findTopCell(gate));
-
-    if (toUnload) {
-      const cell = findTopCell(toUnload);
-      const padLayer = toUnload.pad.units.length + toUnload.pad.reserved;
-
-      toUnload.busy = true;
-      toUnload.pad.claimedBy = loader; // пока не поставим, груз на площадке не забирают
-      toUnload.pad.reserved++;
-      cell.slot.busy = true;
-      loader.steps = buildUnloadJob(loader, toUnload, cell, padLayer);
-    }
+    if (!loader.atBay) loader.steps = buildParkSteps(loader);
   }
 
   // ----------------------------------------------------------
-  // Движение
+  // Движение и движение вил
   // ----------------------------------------------------------
 
   // С грузом едем медленнее: чем тяжелее относительно грузоподъёмности, тем сильнее.
-  const currentSpeed = (loader) =>
-    baseSpeed * (1 - LOAD_SLOWDOWN * Math.min(1, (loader.carried ? CARGO_WEIGHT_KG : 0) / capacityKg));
+  const currentSpeed = (loader) => baseSpeed * (1 - LOAD_SLOWDOWN * (loader.carried ? loadRatio : 0));
 
+  function tryMove(loader, next) {
+    if (findBlocker(loader, next, loaders)) return false;
+
+    loader.x = next.x;
+    loader.z = next.z;
+    loader.heading = next.heading;
+
+    return true;
+  }
+
+  // Разворот на месте; true — уже смотрит куда нужно.
   function turnTo(loader, heading, dt) {
     const diff = angleDiff(loader.heading, heading);
+    if (Math.abs(diff) <= ROTATE_EPS) return true;
+
     const maxTurn = FORKLIFT_TURN_RATE * dt;
+    const turned = loader.heading + (Math.abs(diff) <= maxTurn ? diff : Math.sign(diff) * maxTurn);
 
-    loader.heading += Math.abs(diff) <= maxTurn ? diff : Math.sign(diff) * maxTurn;
+    tryMove(loader, { x: loader.x, z: loader.z, heading: turned });
 
-    return Math.abs(diff) <= maxTurn;
+    return Math.abs(angleDiff(loader.heading, heading)) <= ROTATE_EPS;
   }
 
   // Едет к точке; вперёд — с поворотом на месте в нужную сторону, назад
@@ -283,14 +642,16 @@ export function createLoaderSystem({ group, count, capacityKg, metersPerUnit, ca
     const distance = Math.hypot(dx, dz);
 
     if (distance < ARRIVE_EPS) return true;
-
-    if (!step.reverse && !turnTo(loader, Math.atan2(dx, dz), dt)) return false;
+    if (!step.reverse && distance > AIM_MIN_DISTANCE && !turnTo(loader, Math.atan2(dx, dz), dt)) return false;
 
     const travel = Math.min(distance, currentSpeed(loader) * dt);
-    loader.x += (dx / distance) * travel;
-    loader.z += (dz / distance) * travel;
+    const moved = tryMove(loader, {
+      x: loader.x + (dx / distance) * travel,
+      z: loader.z + (dz / distance) * travel,
+      heading: loader.heading,
+    });
 
-    return travel >= distance;
+    return moved && travel >= distance;
   }
 
   function moveFork(loader, dt) {
@@ -305,16 +666,11 @@ export function createLoaderSystem({ group, count, capacityKg, metersPerUnit, ca
   // Действия с грузом
   // ----------------------------------------------------------
 
-  // Единица переезжает на вилы: стоит там же, где стояла, поэтому «прыжка» нет,
-  // а дальше она едет вместе с вилами.
+  // Единица переезжает на вилы: стоит там же, где стояла, поэтому «прыжка» нет.
   function takeUnit(loader, unit) {
     loader.carried = unit;
     loader.robot.carry.add(unit);
     unit.position.set(0, 0, 0);
-    unit.userData.shipTimer = undefined;
-
-    const fallingIndex = falling.findIndex((item) => item.unit === unit);
-    if (fallingIndex >= 0) falling.splice(fallingIndex, 1);
   }
 
   function placeUnit(loader, x, layer, z) {
@@ -339,36 +695,13 @@ export function createLoaderSystem({ group, count, capacityKg, metersPerUnit, ca
 
       case "fork":
         loader.forkTarget = step.lift;
+        return true;
+
+      case "waitFork":
         return Math.abs(loader.forkTarget - loader.forkLift) < 1e-3;
 
-      case "pickFromPad":
-        takeUnit(loader, step.gate.pad.units.pop());
-        return true;
-
-      // Площадка свободна для нового груза только когда погрузчик от неё отъехал.
-      case "releasePad":
-        step.gate.pad.claimedBy = null;
-        return true;
-
-      case "putInCell":
-        step.slot.units.push(placeUnit(loader, step.lane.x, step.layer, step.slot.z));
-        step.slot.busy = false;
-        return true;
-
-      case "pickFromCell":
-        takeUnit(loader, step.slot.units.pop());
-        step.slot.busy = false;
-        return true;
-
-      case "putOnPad": {
-        const layer = step.gate.pad.units.length;
-        step.gate.pad.units.push(placeUnit(loader, step.gate.x, layer, PAD_Z));
-        step.gate.pad.reserved--;
-        return true;
-      }
-
-      case "finish":
-        step.gate.busy = false;
+      case "act":
+        step.run(loader);
         return true;
 
       default:
@@ -380,11 +713,9 @@ export function createLoaderSystem({ group, count, capacityKg, metersPerUnit, ca
     if (loader.steps.length === 0) assignJob(loader);
 
     const working = loader.steps.length > 0;
-    loader.meter.consume(dt, working ? "work" : "idle");
+    loader.meter.consume(dt, working ? "work" : "idle", loader.carried ? loadRatio : 0);
 
-    if (working && runStep(loader, loader.steps[0], dt)) {
-      loader.steps.shift();
-    }
+    if (working && runStep(loader, loader.steps[0], dt)) loader.steps.shift();
 
     moveFork(loader, dt);
 
@@ -397,30 +728,53 @@ export function createLoaderSystem({ group, count, capacityKg, metersPerUnit, ca
   // ----------------------------------------------------------
 
   function step(dt) {
-    updateArrivals(dt);
+    time += dt;
 
     for (const gate of gates) {
-      updateShipping(gate, dt);
+      updateDispatch(gate, dt);
+      updateBay(gate, dt);
       updateMode(gate);
     }
 
+    updateFlights(dt);
     loaders.forEach((loader) => updateLoader(loader, dt));
   }
 
+  const sum = (fn) => gates.reduce((total, gate) => total + fn(gate), 0);
+
   function getStats() {
-    const storedUnits = gates.reduce((sum, gate) => sum + countStoredUnits(gate), 0);
-    const capacityUnits = gates.reduce((sum, gate) => sum + storageCapacityUnits(gate), 0);
+    const stored = sum(storageUnits);
+    const capacity = sum((gate) => gate.storageLanes.reduce((total, lane) => total + laneCapacity(lane), 0));
     const modes = new Set(gates.map((gate) => gate.mode));
 
     return {
-      storedKg: storedUnits * CARGO_WEIGHT_KG,
-      fillPercent: capacityUnits > 0 ? Math.round((storedUnits / capacityUnits) * 100) : 0,
-      waitingUnits: gates.reduce((sum, gate) => sum + gate.pad.units.length, 0),
       phase: modes.size > 1 ? "mixed" : [...modes][0],
       cycles: Math.min(...gates.map((gate) => gate.cycles)),
-      shippedKg: shippedUnits * CARGO_WEIGHT_KG,
+      storedKg: Math.round(stored * cargoWeightKg),
+      fillPercent: Math.round((stored / capacity) * 100),
+      dockUnits: sum(dockUnits),
+      trucksAtGates: gates.filter((gate) => gate.bay.busy).length,
+      trucksWaiting: sum((gate) => gate.trucksWaiting),
+      trucksIn,
+      trucksOut,
+      receivedKg: Math.round(receivedUnits * cargoWeightKg),
+      shippedKg: Math.round(shippedUnits * cargoWeightKg),
+      // Фактические потоки за время работы: перевезено погрузчиками, принято и
+      // отгружено (единиц в час), и средняя длина маршрута груза, м.
+      movedPerHour: time > 60 ? Math.round((movedUnits * 3600) / time) : 0,
+      receivedPerHour: time > 60 ? Math.round((receivedUnits * 3600) / time) : 0,
+      shippedPerHour: time > 60 ? Math.round((shippedUnits * 3600) / time) : 0,
+      avgRouteM: movedUnits > 0 ? Math.round((routeUnitsTotal / movedUnits) * metersPerUnit) : 0,
+      // Занятость погрузчиков: сколько сейчас на задании.
+      busyLoaders: loaders.filter((loader) => !loader.atBay && loader.steps.length > 0).length,
     };
   }
 
-  return { step, getStats, meters: loaders.map((loader) => loader.meter) };
+  return {
+    step,
+    getStats,
+    meters: loaders.map((loader) => loader.meter),
+    payload,
+    storageCapacityUnits: sum((gate) => gate.storageLanes.reduce((total, lane) => total + laneCapacity(lane), 0)),
+  };
 }

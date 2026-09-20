@@ -15,16 +15,40 @@ import { drawTrailSegment, fadeTrailRect, clearTrailRect, sectorToPixelRect, TRA
 import { makeVacuumRobot } from "../robots/vacuumRobot.js";
 import { createEnergyMeter } from "../energy.js";
 import { chargingStationPositions, createCharger, STATION_HEADING } from "./chargingStations.js";
+import { steerAround, pushOut, bodyBox } from "./avoidance.js";
 
-const ARRIVE_EPS = 0.05;
+const ARRIVE_EPS = 0.15;
+const TURN_RATE = 6; // рад/с — как быстро едущий робот поворачивается
+const RETURN_SLACK = 1.3; // запас времени на объезды по дороге к станции
 const EPS = 1e-6;
 const MARK_RADIUS = (VACUUM_SWATH / 2) * 1.2;
+
+const angleDiff = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
+
+function turnToward(heading, target, maxTurn) {
+  const diff = angleDiff(heading, target);
+  return heading + (Math.abs(diff) <= maxTurn ? diff : Math.sign(diff) * maxTurn);
+}
+
+// Участки по возрастанию расстояния от юго-западного угла (там станции), чтобы
+// i-й от угла робот получил i-й от угла участок.
+function sortByDistanceFromCorner(sectors) {
+  const distance = (s) => Math.hypot((s.xMin + s.xMax) / 2 + FLOOR / 2, (s.zMin + s.zMax) / 2 - FLOOR / 2);
+  return [...sectors].sort((a, b) => distance(a) - distance(b));
+}
 
 // ============================================================
 // Флот пылесосов. Каждый убирает свой сектор «змейкой» и живёт по циклу:
 //
-//   charging → toWork → working → (батарея на исходе) toStation → charging → …
-//                                → (сектор убран)      toStation → parked
+//   toWork → working → (батарея на исходе) toStation → charging → toWork → …
+//                    → (сектор убран)      toStation → parked
+//
+// Стартуют пылесосы с частично заряженной батареей (VACUUM_START_SOC) и сразу
+// едут работать; заряжаются уже потом, когда батарея на исходе.
+//
+// Участки раздаются по расстоянию от угла со станциями: ближайший к углу робот
+// едет на ближайший к углу участок, самый дальний — на самый дальний. Едущие
+// роботы объезжают друг друга и роборуки (avoidance.js).
 //
 // Разряд и зарядка считаются счётчиком энергии (energy.js), поэтому время
 // работы на одной зарядке берётся из каталога. Возвращаться на станцию робот
@@ -35,7 +59,7 @@ const MARK_RADIUS = (VACUUM_SWATH / 2) * 1.2;
 export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyProfile, obstacles, trail, grid }) {
   const transitSpeed = cleaningSpeed * VACUUM_TRANSIT_FACTOR;
   const stations = chargingStationPositions(count);
-  const sectors = computeSectors(count, zone);
+  const sectors = sortByDistanceFromCorner(computeSectors(count, zone));
 
   const robots = sectors.map((sector, index) => createRobot(sector, stations[index]));
 
@@ -72,8 +96,8 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
       // Последняя точка следа: рисуем от неё, поэтому она — начало ряда, а не станция.
       lastDrawn: { x: rowCenters[0], z: sector.zMin },
       dirZ: 1,
-      // С батареей сначала полностью заряжаемся, без неё сразу едем работать.
-      state: meter.hasBattery ? "charging" : "toWork",
+      heading: STATION_HEADING,
+      state: "toWork",
       finished: false,
       fading: false,
       fadeTime: 0,
@@ -88,10 +112,31 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
     robot.pos.x = x;
     robot.pos.z = z;
     robot.model.position.set(x, VACUUM_FLOOR_OFFSET, z);
-    if (heading !== undefined) robot.model.rotation.y = heading;
+
+    if (heading !== undefined) {
+      robot.heading = heading;
+      robot.model.rotation.y = heading;
+    }
   }
 
-  // Едет по прямой к точке; true — приехал.
+  // Едущие сейчас роботы — для них остальные едущие «круги», а не корпуса.
+  const isTransit = (robot) => robot.state === "toWork" || robot.state === "toStation";
+
+  function obstaclesFor(robot) {
+    const boxes = [...obstacles];
+    const circles = [];
+
+    for (const other of robots) {
+      if (other === robot) continue;
+
+      if (isTransit(other)) circles.push(other.pos);
+      else boxes.push(bodyBox(other.pos));
+    }
+
+    return { boxes, circles };
+  }
+
+  // Едет к точке, объезжая роботов и роборуки; true — приехал.
   function driveToward(robot, target, dt) {
     const dx = target.x - robot.pos.x;
     const dz = target.z - robot.pos.z;
@@ -99,10 +144,24 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
 
     if (distance < ARRIVE_EPS) return true;
 
-    const travel = Math.min(distance, transitSpeed * dt);
-    placeAt(robot, robot.pos.x + (dx / distance) * travel, robot.pos.z + (dz / distance) * travel, Math.atan2(dx, dz));
+    const step = transitSpeed * dt;
 
-    return travel >= distance;
+    if (distance <= step) {
+      placeAt(robot, target.x, target.z);
+      return true;
+    }
+
+    const { boxes, circles } = obstaclesFor(robot);
+    const dir = steerAround(robot.pos, { x: dx / distance, z: dz / distance }, boxes, circles);
+
+    robot.pos.x += dir.x * step;
+    robot.pos.z += dir.z * step;
+    pushOut(robot.pos, boxes, circles);
+
+    robot.heading = turnToward(robot.heading, Math.atan2(dir.x, dir.z), TURN_RATE * dt);
+    placeAt(robot, robot.pos.x, robot.pos.z, robot.heading);
+
+    return false;
   }
 
   // Где робот должен стоять, чтобы продолжить уборку (с учётом объезда).
@@ -148,7 +207,8 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
   function mustReturnToStation(robot) {
     if (!robot.meter.hasBattery) return false;
 
-    const backSeconds = Math.hypot(robot.station.x - robot.pos.x, robot.station.z - robot.pos.z) / transitSpeed;
+    const backSeconds =
+      (Math.hypot(robot.station.x - robot.pos.x, robot.station.z - robot.pos.z) / transitSpeed) * RETURN_SLACK;
     return robot.meter.soc <= robot.meter.socCostOf(backSeconds) + VACUUM_RETURN_RESERVE;
   }
 
@@ -252,9 +312,19 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
   // Публичный интерфейс
   // ----------------------------------------------------------
 
+  // Для проверки расчётной производительности: сколько клеток убрано и сколько
+  // секунд шла уборка (время, пока хотя бы один робот ещё не закончил).
+  let cleanedCells = 0;
+  let activeSeconds = 0;
+
   // Шаг симуляции; возвращает, сколько клеток пола покрыто впервые.
   function step(dt) {
-    return robots.reduce((sum, robot) => sum + updateRobot(robot, dt), 0);
+    const newly = robots.reduce((sum, robot) => sum + updateRobot(robot, dt), 0);
+
+    cleanedCells += newly;
+    if (robots.some((robot) => !robot.finished)) activeSeconds += dt;
+
+    return newly;
   }
 
   // Растворение следа — в реальном времени, независимо от множителя скорости.
@@ -280,6 +350,8 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
       finished: robots.filter((r) => r.finished).length,
       charging: robots.filter((r) => r.state === "charging").length,
       minSoc: socs.length > 0 ? Math.min(...socs) : null,
+      cleanedCells,
+      activeSeconds: Math.round(activeSeconds),
     };
   }
 

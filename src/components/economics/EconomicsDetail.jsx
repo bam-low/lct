@@ -10,7 +10,7 @@ const FORMULAS = [
   ["TCO", "CAPEX + Σ OPEX за горизонт (с заменой оборудования по сроку службы)"],
 ];
 
-export default function EconomicsDetail({ scenario, counts }) {
+export default function EconomicsDetail({ scenario, counts, floors = 1 }) {
   return (
     <details className="bg-white/40 rounded-xl p-4 text-sm text-[#3F4159]">
       <summary className="font-bold cursor-pointer">Методология расчётов и допущения</summary>
@@ -28,7 +28,9 @@ export default function EconomicsDetail({ scenario, counts }) {
         </div>
 
         <div>
-          <div className="font-semibold mb-1">Состав парка в этом сценарии</div>
+          <div className="font-semibold mb-1">
+            Состав парка в этом сценарии{floors > 1 ? ` (всё здание, ${floors} эт.)` : ""}
+          </div>
           <div className="text-[#6b5f7a]">
             {[
               ["Пылесосы", counts.vacuumCount],

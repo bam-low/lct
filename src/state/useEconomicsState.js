@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { defaultParamsFor } from "../domain/objectTypes.js";
 import { catalogFor, getCatalogItem } from "../domain/catalog.js";
-import { buildAllScenarios, computeRobotCounts } from "../domain/warehouseAdapter.js";
+import { buildAllScenarios, computeRobotCounts, currentProcessOf, effectiveThroughput, speedFactorOf } from "../domain/warehouseAdapter.js";
 import { energyProfileOf } from "../simulation/energy.js";
 import {
   MAX_VACUUM_COUNT,
@@ -50,10 +50,12 @@ function initialState() {
 
   // Количество роботов всегда задаётся вручную (степпер в симуляции), но
   // стартовое значение подсказываем расчётом, чтобы не начинать с крайних.
-  const layout = computeLayout(robotTypes);
+  const layout = computeLayout(robotTypes, workZoneShareOf(params));
 
+  // Стартовое количество считаем на один этаж: на каждом этаже свой такой же парк,
+  // а потоки операций заданы на всё здание.
   const auto = computeRobotCounts({
-    params,
+    params: perFloorParams(params),
     vacuumZoneAreaM2: computeVacuumZoneAreaM2(layout, params.floorAreaM2),
     vacuumSolution: getCatalogItem(solutionIds.vacuum),
     armSolution: getCatalogItem(solutionIds.arm),
@@ -73,7 +75,25 @@ function initialState() {
   };
 }
 
+const workZoneShareOf = (params) => (params.workZonePct ?? 100) / 100;
+
 const clamp = (value, max) => Math.max(1, Math.min(max, value));
+
+// Склад одноэтажный: система этажей осталась в симуляции (floorLevel.js) для
+// медучреждений, а параметр «этажи» из схемы склада убран.
+const floorsOf = () => 1;
+
+// Потоки операций заданы на всё здание; на одном этаже — их доля.
+function perFloorParams(params) {
+  const floors = floorsOf(params);
+
+  return {
+    ...params,
+    requiredSortThroughput: (params.requiredSortThroughput ?? 0) / floors,
+    requiredLoadThroughput: (params.requiredLoadThroughput ?? 0) / floors,
+    requiredOutboundThroughput: (params.requiredOutboundThroughput ?? 0) / floors,
+  };
+}
 
 export function useEconomicsState() {
   const [state, setState] = useState(initialState);
@@ -83,8 +103,12 @@ export function useEconomicsState() {
   }, [state]);
 
   const typesKey = state.robotTypes.join(",");
-  const layout = useMemo(() => computeLayout(state.robotTypes), [state.robotTypes]);
-  const vacuumZoneAreaM2 = computeVacuumZoneAreaM2(layout, state.params.floorAreaM2);
+  const workZoneShare = workZoneShareOf(state.params);
+  const layout = useMemo(() => computeLayout(state.robotTypes, workZoneShare), [state.robotTypes, workZoneShare]);
+  const floors = floorsOf(state.params);
+  // Площадь уборки одного этажа и всего здания (для расчёта потребности в уборке).
+  const floorVacuumZoneAreaM2 = computeVacuumZoneAreaM2(layout, state.params.floorAreaM2);
+  const vacuumZoneAreaM2 = floorVacuumZoneAreaM2 * floors;
 
   const selectedSolutions = {
     vacuum: getCatalogItem(state.vacuumSolutionId),
@@ -100,7 +124,7 @@ export function useEconomicsState() {
     loader: layout.useLoader ? selectedSolutions.loader : null,
   };
 
-  // Количество — то, что реально помещается на площади и стоит на экране.
+  // Количество на одном этаже — то, что реально помещается на площади и стоит на экране.
   const counts = {
     vacuumCount: layout.useVacuum ? clamp(state.manualVacuumCount, MAX_VACUUM_COUNT) : 0,
     armCount: layout.useArm ? clamp(state.manualArmCount, layout.maxArmCount) : 0,
@@ -119,6 +143,13 @@ export function useEconomicsState() {
     [state.vacuumSolutionId, state.armSolutionId, state.loaderSolutionId, typesKey]
   );
 
+  // В экономику идёт парк всего здания: на каждом этаже такие же роботы.
+  const totalCounts = {
+    vacuumCount: counts.vacuumCount * floors,
+    armCount: counts.armCount * floors,
+    loaderCount: counts.loaderCount * floors,
+  };
+
   const scenarios = useMemo(
     () =>
       buildAllScenarios({
@@ -126,7 +157,7 @@ export function useEconomicsState() {
         vacuumSolution: activeSolutions.vacuum,
         armSolution: activeSolutions.arm,
         loaderSolution: activeSolutions.loader,
-        counts,
+        counts: totalCounts,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -135,9 +166,9 @@ export function useEconomicsState() {
       state.armSolutionId,
       state.loaderSolutionId,
       typesKey,
-      counts.vacuumCount,
-      counts.armCount,
-      counts.loaderCount,
+      totalCounts.vacuumCount,
+      totalCounts.armCount,
+      totalCounts.loaderCount,
     ]
   );
 
@@ -161,11 +192,21 @@ export function useEconomicsState() {
     params: state.params,
     robotTypes: state.robotTypes,
     layout,
+    floors,
     vacuumZoneAreaM2,
     selectedSolutions,
     activeSolutions,
     energyProfiles,
     counts,
+    totalCounts,
+    workZoneShare,
+    speedFactor: speedFactorOf(state.params),
+    currentProcess: currentProcessOf(state.params, layout),
+    throughputs: {
+      vacuum: effectiveThroughput(activeSolutions.vacuum, state.params),
+      arm: effectiveThroughput(activeSolutions.arm, state.params),
+      loader: effectiveThroughput(activeSolutions.loader, state.params),
+    },
     activeScenario: state.activeScenario,
     scenarios,
 

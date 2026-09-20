@@ -39,6 +39,7 @@ function prepareForklift(gltfScene) {
     bottomY: forkBox.min.y,
     // Центр открытой части вил: между передней кромкой корпуса и кончиками вил.
     carryZ: (bodyBox.max.z + forkBox.max.z) / 2,
+    bodyFrontZ: bodyBox.max.z, // передняя кромка корпуса
   };
 
   return root;
@@ -66,6 +67,15 @@ export function makeForkliftRobot() {
   const group = new THREE.Group();
   group.add(model, carry);
 
+  // Груз глубиной depth (вдоль вил) должен стоять целиком перед корпусом, а не
+  // «утопать» в нём: точку крепления сдвигаем вперёд, если поддон длиннее вил.
+  const setCargoDepth = (depth) => {
+    const openCentre = measure.carryZ * FORKLIFT_MODEL_SCALE;
+    const clearOfBody = measure.bodyFrontZ * FORKLIFT_MODEL_SCALE + depth / 2 + 0.08;
+
+    carry.position.z = Math.max(openCentre, clearOfBody);
+  };
+
   const setForkLift = (height) => {
     // fork.position.y задан в единицах файла — перевод в единицы сцены через масштаб.
     fork.position.y = forkBaseY + height / FORKLIFT_MODEL_SCALE;
@@ -74,5 +84,5 @@ export function makeForkliftRobot() {
 
   setForkLift(0);
 
-  return { group, carry, setForkLift };
+  return { group, carry, setForkLift, setCargoDepth };
 }

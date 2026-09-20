@@ -15,6 +15,8 @@
 //     у робота с батареей — энергия зарядки (с потерями), у роботов от сети
 //     и у роботов без моделирования батареи — то, что они израсходовали.
 
+import { LOAD_POWER_GAIN } from "./constants.js";
+
 export const CHARGE_EFFICIENCY = 0.9; // доля энергии из сети, что попадает в батарею
 
 const SECONDS_PER_HOUR = 3600;
@@ -60,9 +62,10 @@ export function createEnergyMeter(profile, { simulateBattery = false, initialSoc
       return gridKwh;
     },
 
-    // Расход за dt секунд: activity — 'work' или 'idle'.
-    consume(dt, activity) {
-      const powerKw = activity === "work" ? profile.workPowerKw : profile.idlePowerKw;
+    // Расход за dt секунд: activity — 'work' или 'idle'; load (0..1) — насколько
+    // робот нагружен относительно грузоподъёмности: с грузом мощность на работе выше.
+    consume(dt, activity, load = 0) {
+      const powerKw = activity === "work" ? profile.workPowerKw * (1 + LOAD_POWER_GAIN * load) : profile.idlePowerKw;
       const kwh = (powerKw * dt) / SECONDS_PER_HOUR;
 
       usedKwh += kwh;

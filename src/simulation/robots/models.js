@@ -1,9 +1,10 @@
 import { vacuumModel } from "./vacuumRobot.js";
 import { forkliftModel } from "./forkliftRobot.js";
+import { truckModel } from "./truckRobot.js";
 
-// Все glb-модели роботов, которые нужны сцене, — в одном месте, чтобы main.jsx
-// и WarehouseScene не знали, сколько их и как они называются.
-const MODELS = [vacuumModel, forkliftModel];
+// Все glb-модели роботов и техники, которые нужны сцене, — в одном месте, чтобы
+// main.jsx и WarehouseScene не знали, сколько их и как они называются.
+const MODELS = [vacuumModel, forkliftModel, truckModel];
 
 export const areRobotModelsReady = () => MODELS.every((model) => model.isReady());
 

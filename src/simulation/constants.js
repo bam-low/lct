@@ -24,10 +24,10 @@ export const VACUUM_SWATH = 2 * VACUUM_HALF_WIDTH;
 
 // Цикл зарядки пылесоса: в пути на станцию и обратно он едет быстрее, чем
 // убирает; возвращается, когда заряда остаётся на дорогу плюс этот запас;
-// стартует с частично заряженной батареей и сначала заряжается до полной.
+// стартует с заряда VACUUM_START_SOC и сразу едет работать.
 export const VACUUM_TRANSIT_FACTOR = 1.6;
 export const VACUUM_RETURN_RESERVE = 0.04;
-export const VACUUM_START_SOC = 0.25;
+export const VACUUM_START_SOC = 0.95;
 
 // Прозрачность белого следа (общая для всего слоя, задаётся на материале).
 export const TRAIL_OPACITY = 0.7;
@@ -95,3 +95,8 @@ export const PALETTE = {
 };
 
 export const ISO_ELEV = Math.atan(1 / Math.sqrt(2));
+
+// Фура: масштаб модели, скорость и то, как груз тяжелит энергопотребление.
+export const TRUCK_MODEL_SCALE = 1.0;
+export const TRUCK_SPEED_MPS = 6; // м/с; в сцене делится на metersPerUnit, как и скорость погрузчика
+export const LOAD_POWER_GAIN = 0.6; // при полной загрузке мощность на работе выше на эту долю

@@ -14,13 +14,48 @@ import {
   linearDepreciationPerYear,
 } from "./economics.js";
 import { CHARGE_EFFICIENCY } from "../simulation/energy.js";
+import { LOAD_SLOWDOWN } from "../simulation/constants.js";
+import { selectOption } from "./objectTypes.js";
 
 const RESERVE_RATIO = 0.05;
+const LOADER_HANDLING_SECONDS = 25; // подъём/опускание вил, повороты, заезд в полосу и выезд за один рейс
+
+export const hoursPerShift = (params) => params.shiftHoursPerDay || 8;
+export const operatingHoursPerDay = (params) => hoursPerShift(params) * (params.shiftsPerDay || 1);
+
+// Во сколько раз ограничения планировки (колонны, узкие проходы) замедляют роботов.
+export const speedFactorOf = (params) => selectOption("warehouse", "layoutRestriction", params.layoutRestriction)?.speedFactor ?? 1;
+
+// Расчётный цикл погрузчика (с): порожний путь до груза, путь с грузом (он медленнее
+// — LOAD_SLOWDOWN) и возня с вилами. Протяжённость маршрута задана в параметрах.
+export function loaderCycleSeconds(solution, params) {
+  const speed = solution.technical.speed ?? 2;
+  const capacity = solution.technical.capacityKg ?? 100;
+  const loadRatio = Math.min(1, (params.cargoWeightKg ?? 50) / capacity);
+  const route = params.routeLengthM ?? 60;
+
+  return route / speed + route / (speed * (1 - LOAD_SLOWDOWN * loadRatio)) + LOADER_HANDLING_SECONDS;
+}
+
+// Производительность одного робота, которую реально можно ждать на этом объекте:
+// у пылесоса и роборуки — паспортная (пылесос — с поправкой на планировку), у
+// погрузчика — меньшая из паспортной и рассчитанной по длине маршрута.
+export function effectiveThroughput(solution, params) {
+  if (!solution) return 0;
+
+  const nominal = solution.technical.throughput ?? 0;
+  const type = solution.identification.type;
+
+  if (type === "loader") {
+    return Math.min(nominal, 3600 / loaderCycleSeconds(solution, params)) * speedFactorOf(params);
+  }
+
+  return type === "vacuum" ? nominal * speedFactorOf(params) : nominal;
+}
 
 // Пиковая потребность в уборке, м²/ч: площадь зоны нужно убрать за одну смену.
 export function vacuumPeakDemand(params, vacuumZoneAreaM2) {
-  const hours = params.shiftHoursPerDay || 8;
-  return vacuumZoneAreaM2 / hours;
+  return vacuumZoneAreaM2 / hoursPerShift(params);
 }
 
 // Пиковая потребность сортировки, оп/ч — напрямую задаётся параметром объекта.
@@ -28,14 +63,24 @@ export function armPeakDemand(params) {
   return params.requiredSortThroughput ?? 0;
 }
 
-// Пиковая потребность погрузки, грузовых единиц/ч (одна единица — 50 кг).
+// Пиковая потребность погрузчиков, грузовых единиц/ч: принять входящий груз и
+// подать исходящий к воротам.
 export function loaderPeakDemand(params) {
-  return params.requiredLoadThroughput ?? 0;
+  return (params.requiredLoadThroughput ?? 0) + (params.requiredOutboundThroughput ?? 0);
+}
+
+// Потребность склада в операциях, которые сейчас делает персонал: то, что
+// закрывают выбранные роботы (без уборки — она измеряется в м²).
+export function currentProcessOf(params, { useArm, useLoader }) {
+  const demand = (useArm ? armPeakDemand(params) : 0) + (useLoader ? loaderPeakDemand(params) : 0);
+  const capacity = (params.staffCount ?? 0) * (params.manualProductivity ?? 0);
+
+  return { demand, capacity, coveragePct: demand > 0 ? Math.min(999, (capacity / demand) * 100) : null };
 }
 
 // Количество роботов «по расчёту» (ТЗ 3.5.2) — единый источник для симуляции и экономики.
 export function computeRobotCounts({ params, vacuumZoneAreaM2, vacuumSolution, armSolution, loaderSolution }) {
-  const vacuumThroughput = vacuumSolution?.technical.throughput ?? 0;
+  const vacuumThroughput = effectiveThroughput(vacuumSolution, params);
   const vacuumPeak = vacuumPeakDemand(params, vacuumZoneAreaM2);
 
   const vacuumCount = vacuumSolution
@@ -46,7 +91,7 @@ export function computeRobotCounts({ params, vacuumZoneAreaM2, vacuumSolution, a
       })
     : 0;
 
-  const armThroughput = armSolution?.technical.throughput ?? 0;
+  const armThroughput = effectiveThroughput(armSolution, params);
   const armPeak = armPeakDemand(params);
 
   const armCount = armSolution
@@ -57,7 +102,7 @@ export function computeRobotCounts({ params, vacuumZoneAreaM2, vacuumSolution, a
       })
     : 0;
 
-  const loaderThroughput = loaderSolution?.technical.throughput ?? 0;
+  const loaderThroughput = effectiveThroughput(loaderSolution, params);
   const loaderPeak = loaderPeakDemand(params);
 
   const loaderCount = loaderSolution
@@ -88,7 +133,7 @@ function energyCostPerYear(solution, count, params) {
   const energy = solution.technical.energy;
   if (!energy) return 0;
 
-  const shiftHours = (params.shiftHoursPerDay ?? 0) * (params.daysPerYear ?? 0);
+  const shiftHours = operatingHoursPerDay(params) * (params.daysPerYear ?? 0);
   const load = params.loadFactor ?? 1;
   const usedKwh = (energy.workPowerKw * load + energy.idlePowerKw * (1 - load)) * shiftHours;
   const gridKwh = solution.technical.autonomyHours ? usedKwh / CHARGE_EFFICIENCY : usedKwh;
@@ -248,6 +293,7 @@ export function buildSensitivityScenario({
     hourlyWage: (params.hourlyWage ?? 0) * laborFactor,
     requiredSortThroughput: (params.requiredSortThroughput ?? 0) * demandFactor,
     requiredLoadThroughput: (params.requiredLoadThroughput ?? 0) * demandFactor,
+    requiredOutboundThroughput: (params.requiredOutboundThroughput ?? 0) * demandFactor,
   };
 
   const shiftedVacuumSolution = scaleSolutionCosts(vacuumSolution, equipmentFactor);

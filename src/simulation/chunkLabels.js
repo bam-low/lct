@@ -20,7 +20,10 @@ const FONT_MAIN = 0.11;
 const FONT_SUB = 0.085;
 const CORNER_INSET = 0.36; // центр подписи от угла чанка
 
-const CAMERA_START_THETA = Math.PI / 4;
+// В изометрии камера стоит на диагонали (θ = π/4 + k·π/2), в виде сверху — на оси
+// (θ = k·π/2); от этого зависит, в каком углу чанка и как повёрнут текст.
+const ISO_PHASE = Math.PI / 4;
+const TOP_PHASE = 0;
 const QUARTER = Math.PI / 2;
 
 export function createChunkLabelLayer() {
@@ -48,9 +51,12 @@ export function createChunkLabelLayer() {
 
   let grid = null;
   let quarter = null;
+  let topView = false;
+
+  const phase = () => (topView ? TOP_PHASE : ISO_PHASE);
 
   // Сколько четвертей оборота от стартового положения камеры.
-  const quarterOf = (theta) => Math.round((theta - CAMERA_START_THETA) / QUARTER);
+  const quarterOf = (theta) => Math.round((theta - phase()) / QUARTER);
 
   function draw() {
     ctx.clearRect(0, 0, LAYER_CANVAS_PX, LAYER_CANVAS_PX);
@@ -58,9 +64,13 @@ export function createChunkLabelLayer() {
 
     // Направление «от камеры» на полу и связанные с ним оси текста: у канваса
     // ось x — мировой +x, ось y — мировой +z.
-    const theta = CAMERA_START_THETA + quarter * QUARTER;
-    const awayX = Math.sign(-Math.sin(theta));
-    const awayZ = Math.sign(-Math.cos(theta));
+    const theta = phase() + quarter * QUARTER;
+
+    // Угол чанка для подписи: в изометрии — дальний от камеры, сверху — левый верхний.
+    const sin = Math.sin(theta);
+    const cos = Math.cos(theta);
+    const awayX = topView ? Math.sign(Math.round(-sin - cos)) : Math.sign(-sin);
+    const awayZ = topView ? Math.sign(Math.round(-cos + sin)) : Math.sign(-cos);
 
     const pxPerUnit = LAYER_CANVAS_PX / FLOOR;
     const chunkPx = grid.chunkSizeUnits * pxPerUnit;
@@ -96,6 +106,15 @@ export function createChunkLabelLayer() {
 
   return {
     mesh,
+
+    // Переключение вида: 3D-изометрия или 2D сверху.
+    setTopView(next, theta) {
+      if (next === topView) return;
+
+      topView = next;
+      quarter = quarterOf(theta);
+      draw();
+    },
 
     // Новая сетка чанков (например, поменяли площадь) — перерисовать всё.
     setGrid(nextGrid, theta) {
