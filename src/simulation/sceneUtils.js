@@ -1,49 +1,49 @@
 import * as THREE from "three";
-import { Z_MIN, Z_MAX } from "./layout.js";
 import { VACUUM_SWATH } from "./constants.js";
 
-// Делит зону шириной zoneWidth (начиная с zoneOffsetX) на count примерно
-// квадратных чанков — по одному на пылесос.
-export function computeChunks(count, zoneWidth, zoneOffsetX) {
-  const zoneLength = Z_MAX - Z_MIN;
-  const cols = Math.max(1, Math.round(Math.sqrt((count * zoneWidth) / zoneLength)));
+// Делит зону уборки zone {xMin, width, zMin, zMax} на count примерно квадратных
+// участков — по одному на пылесос. (Не путать с чанками пола из chunkGrid.js:
+// чанки — подписанная сетка пола, участок — то, что убирает один робот.)
+export function computeSectors(count, zone) {
+  const zoneLength = zone.zMax - zone.zMin;
+  const cols = Math.max(1, Math.round(Math.sqrt((count * zone.width) / zoneLength)));
   const fullRows = Math.floor(count / cols);
   const remainder = count - fullRows * cols;
   const totalRows = fullRows + (remainder > 0 ? 1 : 0);
   const rowHeight = zoneLength / totalRows;
 
-  const chunks = [];
+  const sectors = [];
 
   for (let row = 0; row < totalRows; row++) {
     const colsInRow = row < fullRows ? cols : remainder;
     if (colsInRow <= 0) continue;
 
-    const colWidth = zoneWidth / colsInRow;
+    const colWidth = zone.width / colsInRow;
 
     for (let c = 0; c < colsInRow; c++) {
-      chunks.push({
-        xMin: zoneOffsetX + c * colWidth,
-        xMax: zoneOffsetX + (c + 1) * colWidth,
-        zMin: Z_MIN + row * rowHeight,
-        zMax: Z_MIN + (row + 1) * rowHeight,
+      sectors.push({
+        xMin: zone.xMin + c * colWidth,
+        xMax: zone.xMin + (c + 1) * colWidth,
+        zMin: zone.zMin + row * rowHeight,
+        zMax: zone.zMin + (row + 1) * rowHeight,
         row,
         col: c,
       });
     }
   }
 
-  return chunks;
+  return sectors;
 }
 
-// Ряды прохода пылесоса внутри чанка, с шагом VACUUM_SWATH.
-export function buildRowCenters(chunk) {
-  const width = chunk.xMax - chunk.xMin;
+// Ряды прохода пылесоса внутри участка, с шагом VACUUM_SWATH.
+export function buildRowCenters(sector) {
+  const width = sector.xMax - sector.xMin;
   const numRows = Math.max(1, Math.ceil(width / VACUUM_SWATH));
   const centers = [];
 
   for (let i = 0; i < numRows; i++) {
-    let rx = chunk.xMin + VACUUM_SWATH * (i + 0.5);
-    if (rx > chunk.xMax - VACUUM_SWATH / 2) rx = chunk.xMax - VACUUM_SWATH / 2;
+    let rx = sector.xMin + VACUUM_SWATH * (i + 0.5);
+    if (rx > sector.xMax - VACUUM_SWATH / 2) rx = sector.xMax - VACUUM_SWATH / 2;
     centers.push(rx);
   }
 

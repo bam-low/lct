@@ -4,7 +4,7 @@ import { getObjectType } from "./domain/objectTypes.js";
 import { catalogFor } from "./domain/catalog.js";
 import WarehouseScene from "./simulation/WarehouseScene.jsx";
 import ObjectTypeSelect from "./components/economics/ObjectTypeSelect.jsx";
-import ModeSelect from "./components/economics/ModeSelect.jsx";
+import RobotTypesSelect from "./components/economics/RobotTypesSelect.jsx";
 import ParamsForm from "./components/economics/ParamsForm.jsx";
 import SolutionPicker from "./components/economics/SolutionPicker.jsx";
 import ScenarioComparisonTable from "./components/economics/ScenarioComparisonTable.jsx";
@@ -17,8 +17,8 @@ export default function App() {
   const objectType = getObjectType(eco.objectTypeId);
   const [screen, setScreen] = useState("setup"); // 'setup' | 'results'
 
-  const vacuumOptions = catalogFor(eco.objectTypeId, "floor_cleaning");
-  const armOptions = catalogFor(eco.objectTypeId, "sorting");
+  const { useVacuum, useArm, useLoader } = eco.layout;
+  const { vacuum: vacuumSolution, arm: armSolution, loader: loaderSolution } = eco.selectedSolutions;
 
   const activeScenario = eco.scenarios[eco.activeScenario];
 
@@ -52,24 +52,36 @@ export default function App() {
           <>
             <ObjectTypeSelect selected={eco.objectTypeId} />
 
+            <RobotTypesSelect selected={eco.robotTypes} onSelect={eco.setRobotTypes} />
+
             <ParamsForm objectType={objectType} params={eco.params} onChange={eco.setParam} />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <SolutionPicker
-                title="🧹 Решение для уборки"
-                options={vacuumOptions}
-                selectedId={eco.vacuumSolution?.id}
-                onChange={eco.setVacuumSolutionId}
-              />
-              <SolutionPicker
-                title="🦾 Решение для сортировки"
-                options={armOptions}
-                selectedId={eco.armSolution?.id}
-                onChange={eco.setArmSolutionId}
-              />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {useVacuum && (
+                <SolutionPicker
+                  title="🧹 Решение для уборки"
+                  options={catalogFor(eco.objectTypeId, "floor_cleaning")}
+                  selectedId={vacuumSolution?.id}
+                  onChange={eco.setVacuumSolutionId}
+                />
+              )}
+              {useArm && (
+                <SolutionPicker
+                  title="🦾 Решение для сортировки"
+                  options={catalogFor(eco.objectTypeId, "sorting")}
+                  selectedId={armSolution?.id}
+                  onChange={eco.setArmSolutionId}
+                />
+              )}
+              {useLoader && (
+                <SolutionPicker
+                  title="🚜 Решение для погрузки"
+                  options={catalogFor(eco.objectTypeId, "loading")}
+                  selectedId={loaderSolution?.id}
+                  onChange={eco.setLoaderSolutionId}
+                />
+              )}
             </div>
-
-            <ModeSelect mode={eco.mode} onChange={eco.setMode} />
 
             <div className="flex justify-end px-1 pt-2">
               <button
@@ -92,13 +104,19 @@ export default function App() {
             </button>
 
             <WarehouseScene
-              mode={eco.mode}
-              vacuumCount={eco.scenarios.counts.vacuumCount}
-              vacuumProd={eco.vacuumSolution?.technical.throughput ?? 0}
-              armCount={eco.scenarios.counts.armCount}
-              armProd={(eco.armSolution?.technical.throughput ?? 0) / 60}
+              robotTypes={eco.robotTypes}
+              floorAreaM2={eco.params.floorAreaM2}
+              vacuumCount={eco.counts.vacuumCount}
+              vacuumProd={vacuumSolution?.technical.throughput ?? 0}
+              armCount={eco.counts.armCount}
+              armProd={(armSolution?.technical.throughput ?? 0) / 60}
+              loaderCount={eco.counts.loaderCount}
+              loaderCapacityKg={loaderSolution?.technical.capacityKg ?? 100}
+              cargoPerHour={eco.params.requiredLoadThroughput}
+              energyProfiles={eco.energyProfiles}
               onManualVacuumCountChange={eco.setManualVacuumCount}
               onManualArmCountChange={eco.setManualArmCount}
+              onManualLoaderCountChange={eco.setManualLoaderCount}
             />
 
             <ScenarioComparisonTable
@@ -111,13 +129,14 @@ export default function App() {
               <VerdictNote paybackYears={activeScenario.paybackYears} />
             )}
 
-            <EconomicsDetail scenario={activeScenario} counts={eco.scenarios.counts} />
+            <EconomicsDetail scenario={activeScenario} counts={eco.counts} />
 
             <SensitivityPanel
               params={eco.params}
-              vacuumZoneAreaM2={eco.zones.vacuumZoneAreaM2}
-              vacuumSolution={eco.vacuumSolution}
-              armSolution={eco.armSolution}
+              vacuumZoneAreaM2={eco.vacuumZoneAreaM2}
+              vacuumSolution={eco.activeSolutions.vacuum}
+              armSolution={eco.activeSolutions.arm}
+              loaderSolution={eco.activeSolutions.loader}
             />
 
             <p className="text-xs text-[#6b5f7a] px-1">

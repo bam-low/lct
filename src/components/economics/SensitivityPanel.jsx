@@ -3,7 +3,7 @@ import Slider from "../ui/Slider.jsx";
 import { buildSensitivityScenario } from "../../domain/warehouseAdapter.js";
 import { formatCurrencyRUB } from "../../domain/economics.js";
 
-export default function SensitivityPanel({ params, vacuumZoneAreaM2, vacuumSolution, armSolution }) {
+export default function SensitivityPanel({ params, vacuumZoneAreaM2, vacuumSolution, armSolution, loaderSolution }) {
   const [equipmentDelta, setEquipmentDelta] = useState(0);
   const [laborDelta, setLaborDelta] = useState(0);
   const [demandDelta, setDemandDelta] = useState(0);
@@ -15,11 +15,12 @@ export default function SensitivityPanel({ params, vacuumZoneAreaM2, vacuumSolut
         vacuumZoneAreaM2,
         vacuumSolution,
         armSolution,
+        loaderSolution,
         equipmentFactor: 1 + equipmentDelta / 100,
         laborFactor: 1 + laborDelta / 100,
         demandFactor: 1 + demandDelta / 100,
       }),
-    [params, vacuumZoneAreaM2, vacuumSolution, armSolution, equipmentDelta, laborDelta, demandDelta]
+    [params, vacuumZoneAreaM2, vacuumSolution, armSolution, loaderSolution, equipmentDelta, laborDelta, demandDelta]
   );
 
   return (

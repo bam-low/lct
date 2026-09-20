@@ -13,6 +13,7 @@ import {
   tco,
   linearDepreciationPerYear,
 } from "./economics.js";
+import { CHARGE_EFFICIENCY } from "../simulation/energy.js";
 
 const RESERVE_RATIO = 0.05;
 
@@ -27,8 +28,13 @@ export function armPeakDemand(params) {
   return params.requiredSortThroughput ?? 0;
 }
 
+// Пиковая потребность погрузки, грузовых единиц/ч (одна единица — 50 кг).
+export function loaderPeakDemand(params) {
+  return params.requiredLoadThroughput ?? 0;
+}
+
 // Количество роботов «по расчёту» (ТЗ 3.5.2) — единый источник для симуляции и экономики.
-export function computeRobotCounts({ params, vacuumZoneAreaM2, vacuumSolution, armSolution }) {
+export function computeRobotCounts({ params, vacuumZoneAreaM2, vacuumSolution, armSolution, loaderSolution }) {
   const vacuumThroughput = vacuumSolution?.technical.throughput ?? 0;
   const vacuumPeak = vacuumPeakDemand(params, vacuumZoneAreaM2);
 
@@ -51,6 +57,17 @@ export function computeRobotCounts({ params, vacuumZoneAreaM2, vacuumSolution, a
       })
     : 0;
 
+  const loaderThroughput = loaderSolution?.technical.throughput ?? 0;
+  const loaderPeak = loaderPeakDemand(params);
+
+  const loaderCount = loaderSolution
+    ? requiredRobotCount({
+        peakDemand: loaderPeak,
+        throughputPerRobot: loaderThroughput,
+        loadFactor: params.loadFactor,
+      })
+    : 0;
+
   return {
     vacuumCount,
     vacuumThroughput,
@@ -58,15 +75,34 @@ export function computeRobotCounts({ params, vacuumZoneAreaM2, vacuumSolution, a
     armCount,
     armThroughput,
     armPeak,
+    loaderCount,
+    loaderThroughput,
+    loaderPeak,
   };
 }
 
-function groupEconomics(solution, count, kind) {
+// Электроэнергия за год, ₽: работа и простой в смену с учётом коэффициента
+// загрузки. Робот с батареей берёт из сети больше, чем расходует, — потери
+// зарядки (CHARGE_EFFICIENCY). Для симуляции те же цифры считает energy.js.
+function energyCostPerYear(solution, count, params) {
+  const energy = solution.technical.energy;
+  if (!energy) return 0;
+
+  const shiftHours = (params.shiftHoursPerDay ?? 0) * (params.daysPerYear ?? 0);
+  const load = params.loadFactor ?? 1;
+  const usedKwh = (energy.workPowerKw * load + energy.idlePowerKw * (1 - load)) * shiftHours;
+  const gridKwh = solution.technical.autonomyHours ? usedKwh / CHARGE_EFFICIENCY : usedKwh;
+
+  return count * gridKwh * (params.electricityTariff ?? 0);
+}
+
+function groupEconomics(solution, count, kind, params) {
   if (!solution || count <= 0) {
-    return { equipment: 0, software: 0, integration: 0, service: 0, repair: 0, lifespanYears: 0 };
+    return { equipment: 0, software: 0, integration: 0, service: 0, repair: 0, energy: 0, lifespanYears: 0 };
   }
 
   const e = solution.economics;
+  const energy = energyCostPerYear(solution, count, params);
 
   if (kind === "raas") {
     return {
@@ -75,6 +111,7 @@ function groupEconomics(solution, count, kind) {
       integration: 0,
       service: count * (e.raas?.monthlyRate ?? 0) * 12,
       repair: 0,
+      energy,
       lifespanYears: e.lifespanYears,
     };
   }
@@ -85,6 +122,7 @@ function groupEconomics(solution, count, kind) {
     integration: count * e.implementationCost,
     service: count * e.serviceCostPerYear,
     repair: count * e.maintenanceCostPerYear,
+    energy,
     lifespanYears: e.lifespanYears,
   };
 }
@@ -98,16 +136,16 @@ function baselineOpexOf(params) {
   );
 }
 
-function weightedLifespan(vacuumEcon, armEcon) {
-  const spans = [vacuumEcon.lifespanYears, armEcon.lifespanYears].filter((v) => v > 0);
+function weightedLifespan(...groups) {
+  const spans = groups.map((g) => g.lifespanYears).filter((v) => v > 0);
   if (spans.length === 0) return 0;
   return spans.reduce((a, b) => a + b, 0) / spans.length;
 }
 
 // Строит один сценарий: 'baseline' | 'purchase' | 'raas'.
-// counts — { vacuumCount, armCount }, обычно из computeRobotCounts(), но может
+// counts — { vacuumCount, armCount, loaderCount }, обычно из computeRobotCounts(), но может
 // быть подменено вручную (what-if / ручная корректировка — ТЗ 3.5.3–3.5.4).
-export function buildWarehouseScenario(kind, { params, vacuumSolution, armSolution, counts }) {
+export function buildWarehouseScenario(kind, { params, vacuumSolution, armSolution, loaderSolution, counts }) {
   const baselineOpex = baselineOpexOf(params);
 
   if (kind === "baseline") {
@@ -127,20 +165,24 @@ export function buildWarehouseScenario(kind, { params, vacuumSolution, armSoluti
     };
   }
 
-  const vacuumEcon = groupEconomics(vacuumSolution, counts.vacuumCount, kind);
-  const armEcon = groupEconomics(armSolution, counts.armCount, kind);
+  const vacuumEcon = groupEconomics(vacuumSolution, counts.vacuumCount, kind, params);
+  const armEcon = groupEconomics(armSolution, counts.armCount, kind, params);
+  const loaderEcon = groupEconomics(loaderSolution, counts.loaderCount ?? 0, kind, params);
+  const groups = [vacuumEcon, armEcon, loaderEcon];
+  const sumOf = (field) => groups.reduce((sum, g) => sum + g[field], 0);
 
   const rawCapex = capexTotal({
-    equipment: vacuumEcon.equipment + armEcon.equipment,
-    software: vacuumEcon.software + armEcon.software,
-    integration: vacuumEcon.integration + armEcon.integration,
+    equipment: sumOf("equipment"),
+    software: sumOf("software"),
+    integration: sumOf("integration"),
   });
 
   const capex = rawCapex + rawCapex * RESERVE_RATIO;
 
   const opexPerYear = opexTotal({
-    service: vacuumEcon.service + armEcon.service,
-    repair: vacuumEcon.repair + armEcon.repair,
+    service: sumOf("service"),
+    repair: sumOf("repair"),
+    energy: sumOf("energy"),
   });
 
   const effect = annualEffect({
@@ -149,7 +191,7 @@ export function buildWarehouseScenario(kind, { params, vacuumSolution, armSoluti
   });
 
   const horizonYears = params.horizonYears ?? 5;
-  const lifespanYears = weightedLifespan(vacuumEcon, armEcon);
+  const lifespanYears = weightedLifespan(...groups);
 
   return {
     kind,
@@ -196,6 +238,7 @@ export function buildSensitivityScenario({
   vacuumZoneAreaM2,
   vacuumSolution,
   armSolution,
+  loaderSolution,
   equipmentFactor = 1,
   laborFactor = 1,
   demandFactor = 1,
@@ -204,22 +247,26 @@ export function buildSensitivityScenario({
     ...params,
     hourlyWage: (params.hourlyWage ?? 0) * laborFactor,
     requiredSortThroughput: (params.requiredSortThroughput ?? 0) * demandFactor,
+    requiredLoadThroughput: (params.requiredLoadThroughput ?? 0) * demandFactor,
   };
 
   const shiftedVacuumSolution = scaleSolutionCosts(vacuumSolution, equipmentFactor);
   const shiftedArmSolution = scaleSolutionCosts(armSolution, equipmentFactor);
+  const shiftedLoaderSolution = scaleSolutionCosts(loaderSolution, equipmentFactor);
 
   const counts = computeRobotCounts({
     params: shiftedParams,
     vacuumZoneAreaM2: vacuumZoneAreaM2 * demandFactor,
     vacuumSolution: shiftedVacuumSolution,
     armSolution: shiftedArmSolution,
+    loaderSolution: shiftedLoaderSolution,
   });
 
   return buildWarehouseScenario("purchase", {
     params: shiftedParams,
     vacuumSolution: shiftedVacuumSolution,
     armSolution: shiftedArmSolution,
+    loaderSolution: shiftedLoaderSolution,
     counts,
   });
 }
@@ -228,11 +275,13 @@ export function buildSensitivityScenario({
 // пользователя, см. useEconomicsState); computeRobotCounts() остаётся
 // отдельной утилитой для тех мест, где нужна именно расчётная рекомендация
 // (например, стартовое значение или SensitivityPanel).
-export function buildAllScenarios({ params, vacuumSolution, armSolution, counts }) {
+export function buildAllScenarios({ params, vacuumSolution, armSolution, loaderSolution, counts }) {
+  const input = { params, vacuumSolution, armSolution, loaderSolution, counts };
+
   return {
     counts,
-    baseline: buildWarehouseScenario("baseline", { params, vacuumSolution, armSolution, counts }),
-    purchase: buildWarehouseScenario("purchase", { params, vacuumSolution, armSolution, counts }),
-    raas: buildWarehouseScenario("raas", { params, vacuumSolution, armSolution, counts }),
+    baseline: buildWarehouseScenario("baseline", input),
+    purchase: buildWarehouseScenario("purchase", input),
+    raas: buildWarehouseScenario("raas", input),
   };
 }

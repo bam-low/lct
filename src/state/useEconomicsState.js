@@ -2,49 +2,78 @@ import { useEffect, useMemo, useState } from "react";
 import { defaultParamsFor } from "../domain/objectTypes.js";
 import { catalogFor, getCatalogItem } from "../domain/catalog.js";
 import { buildAllScenarios, computeRobotCounts } from "../domain/warehouseAdapter.js";
-import { computeZoneWidths } from "../simulation/layout.js";
+import { energyProfileOf } from "../simulation/energy.js";
+import {
+  MAX_VACUUM_COUNT,
+  MAX_LOADER_COUNT,
+  computeLayout,
+  computeVacuumZoneAreaM2,
+  normalizeRobotTypes,
+} from "../simulation/layout.js";
 import { loadProject, saveProject } from "./projectStore.js";
 
 const OBJECT_TYPE_ID = "warehouse"; // единственный рабочий тип объекта в этом заходе
 
+// Какие процессы каталога закрывает каждый тип робота.
+const PROCESS_OF_TYPE = { vacuum: "floor_cleaning", arm: "sorting", loader: "loading" };
+
+// Старый формат сохранения хранил режим строкой ('vacuum' | 'arm' | 'both').
+function typesFromLegacyMode(mode) {
+  if (mode === "vacuum") return ["vacuum"];
+  if (mode === "arm") return ["arm"];
+  return ["vacuum", "arm"];
+}
+
+// Одна симуляция — один тип робота (или демо-связка): всё остальное из
+// сохранённого состояния заменяется на демо.
+function initialRobotTypes(saved) {
+  return normalizeRobotTypes(saved?.robotTypes ?? (saved?.mode ? typesFromLegacyMode(saved.mode) : null));
+}
+
+function firstSolutionId(type) {
+  return catalogFor(OBJECT_TYPE_ID, PROCESS_OF_TYPE[type])[0]?.id ?? null;
+}
+
 function initialState() {
   const saved = loadProject();
 
-  const params = saved?.params ?? defaultParamsFor(OBJECT_TYPE_ID);
-  const mode = saved?.mode ?? "both";
-  const vacuumSolutionId =
-    saved?.vacuumSolutionId ?? catalogFor(OBJECT_TYPE_ID, "floor_cleaning")[0]?.id ?? null;
-  const armSolutionId = saved?.armSolutionId ?? catalogFor(OBJECT_TYPE_ID, "sorting")[0]?.id ?? null;
+  // Параметры, добавленные позже (площадь, поток погрузки), берём из значений по
+  // умолчанию — иначе в старых сохранениях они были бы пустыми.
+  const params = { ...defaultParamsFor(OBJECT_TYPE_ID), ...saved?.params };
+  const robotTypes = initialRobotTypes(saved);
 
-  // Количество роботов теперь всегда задаётся вручную (степпер в симуляции),
-  // но стартовое значение подсказываем расчётом, чтобы не начинать с "1" или "8".
-  let manualVacuumCount = saved?.manualVacuumCount;
-  let manualArmCount = saved?.manualArmCount;
+  const solutionIds = {
+    vacuum: saved?.vacuumSolutionId ?? firstSolutionId("vacuum"),
+    arm: saved?.armSolutionId ?? firstSolutionId("arm"),
+    loader: saved?.loaderSolutionId ?? firstSolutionId("loader"),
+  };
 
-  if (manualVacuumCount === undefined || manualArmCount === undefined) {
-    const zones = computeZoneWidths(mode);
+  // Количество роботов всегда задаётся вручную (степпер в симуляции), но
+  // стартовое значение подсказываем расчётом, чтобы не начинать с крайних.
+  const layout = computeLayout(robotTypes);
 
-    const auto = computeRobotCounts({
-      params,
-      vacuumZoneAreaM2: zones.vacuumZoneAreaM2,
-      vacuumSolution: getCatalogItem(vacuumSolutionId),
-      armSolution: getCatalogItem(armSolutionId),
-    });
-
-    manualVacuumCount = manualVacuumCount ?? Math.max(1, auto.vacuumCount);
-    manualArmCount = manualArmCount ?? Math.max(1, auto.armCount);
-  }
+  const auto = computeRobotCounts({
+    params,
+    vacuumZoneAreaM2: computeVacuumZoneAreaM2(layout, params.floorAreaM2),
+    vacuumSolution: getCatalogItem(solutionIds.vacuum),
+    armSolution: getCatalogItem(solutionIds.arm),
+    loaderSolution: getCatalogItem(solutionIds.loader),
+  });
 
   return {
     params,
-    mode,
-    vacuumSolutionId,
-    armSolutionId,
-    manualVacuumCount,
-    manualArmCount,
+    robotTypes,
+    vacuumSolutionId: solutionIds.vacuum,
+    armSolutionId: solutionIds.arm,
+    loaderSolutionId: solutionIds.loader,
+    manualVacuumCount: saved?.manualVacuumCount ?? Math.max(1, auto.vacuumCount),
+    manualArmCount: saved?.manualArmCount ?? Math.max(1, auto.armCount),
+    manualLoaderCount: saved?.manualLoaderCount ?? Math.max(1, auto.loaderCount),
     activeScenario: saved?.activeScenario ?? "purchase",
   };
 }
+
+const clamp = (value, max) => Math.max(1, Math.min(max, value));
 
 export function useEconomicsState() {
   const [state, setState] = useState(initialState);
@@ -53,59 +82,101 @@ export function useEconomicsState() {
     saveProject(state);
   }, [state]);
 
-  const vacuumSolution = useMemo(
-    () => getCatalogItem(state.vacuumSolutionId),
-    [state.vacuumSolutionId]
+  const typesKey = state.robotTypes.join(",");
+  const layout = useMemo(() => computeLayout(state.robotTypes), [state.robotTypes]);
+  const vacuumZoneAreaM2 = computeVacuumZoneAreaM2(layout, state.params.floorAreaM2);
+
+  const selectedSolutions = {
+    vacuum: getCatalogItem(state.vacuumSolutionId),
+    arm: getCatalogItem(state.armSolutionId),
+    loader: getCatalogItem(state.loaderSolutionId),
+  };
+
+  // В расчёт идут только выбранные типы роботов: невыбранный тип не даёт ни
+  // роботов, ни стоимости.
+  const activeSolutions = {
+    vacuum: layout.useVacuum ? selectedSolutions.vacuum : null,
+    arm: layout.useArm ? selectedSolutions.arm : null,
+    loader: layout.useLoader ? selectedSolutions.loader : null,
+  };
+
+  // Количество — то, что реально помещается на площади и стоит на экране.
+  const counts = {
+    vacuumCount: layout.useVacuum ? clamp(state.manualVacuumCount, MAX_VACUUM_COUNT) : 0,
+    armCount: layout.useArm ? clamp(state.manualArmCount, layout.maxArmCount) : 0,
+    loaderCount: layout.useLoader ? clamp(state.manualLoaderCount, MAX_LOADER_COUNT) : 0,
+  };
+
+  // Энергопрофили выбранных решений: время работы на зарядке, мощность и т.д.
+  // Считаются здесь, чтобы у сцены была стабильная ссылка и она не пересобиралась зря.
+  const energyProfiles = useMemo(
+    () => ({
+      vacuum: energyProfileOf(activeSolutions.vacuum),
+      arm: energyProfileOf(activeSolutions.arm),
+      loader: energyProfileOf(activeSolutions.loader),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.vacuumSolutionId, state.armSolutionId, state.loaderSolutionId, typesKey]
   );
-
-  const armSolution = useMemo(() => getCatalogItem(state.armSolutionId), [state.armSolutionId]);
-
-  const zones = useMemo(() => computeZoneWidths(state.mode), [state.mode]);
 
   const scenarios = useMemo(
     () =>
       buildAllScenarios({
         params: state.params,
-        vacuumSolution,
-        armSolution,
-        counts: { vacuumCount: state.manualVacuumCount, armCount: state.manualArmCount },
+        vacuumSolution: activeSolutions.vacuum,
+        armSolution: activeSolutions.arm,
+        loaderSolution: activeSolutions.loader,
+        counts,
       }),
-    [state.params, state.manualVacuumCount, state.manualArmCount, vacuumSolution, armSolution]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      state.params,
+      state.vacuumSolutionId,
+      state.armSolutionId,
+      state.loaderSolutionId,
+      typesKey,
+      counts.vacuumCount,
+      counts.armCount,
+      counts.loaderCount,
+    ]
   );
 
   const setParam = (key, value) =>
     setState((s) => ({ ...s, params: { ...s.params, [key]: value } }));
 
-  const setMode = (mode) => setState((s) => ({ ...s, mode }));
+  const setRobotTypes = (types) => setState((s) => ({ ...s, robotTypes: normalizeRobotTypes(types) }));
 
   const setVacuumSolutionId = (id) => setState((s) => ({ ...s, vacuumSolutionId: id }));
-
   const setArmSolutionId = (id) => setState((s) => ({ ...s, armSolutionId: id }));
+  const setLoaderSolutionId = (id) => setState((s) => ({ ...s, loaderSolutionId: id }));
 
   const setManualVacuumCount = (n) => setState((s) => ({ ...s, manualVacuumCount: n }));
-
   const setManualArmCount = (n) => setState((s) => ({ ...s, manualArmCount: n }));
+  const setManualLoaderCount = (n) => setState((s) => ({ ...s, manualLoaderCount: n }));
 
   const setActiveScenario = (kind) => setState((s) => ({ ...s, activeScenario: kind }));
 
   return {
     objectTypeId: OBJECT_TYPE_ID,
     params: state.params,
-    mode: state.mode,
-    zones,
-    vacuumSolution,
-    armSolution,
-    manualVacuumCount: state.manualVacuumCount,
-    manualArmCount: state.manualArmCount,
+    robotTypes: state.robotTypes,
+    layout,
+    vacuumZoneAreaM2,
+    selectedSolutions,
+    activeSolutions,
+    energyProfiles,
+    counts,
     activeScenario: state.activeScenario,
     scenarios,
 
     setParam,
-    setMode,
+    setRobotTypes,
     setVacuumSolutionId,
     setArmSolutionId,
+    setLoaderSolutionId,
     setManualVacuumCount,
     setManualArmCount,
+    setManualLoaderCount,
     setActiveScenario,
   };
 }

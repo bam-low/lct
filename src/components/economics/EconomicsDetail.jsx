@@ -30,7 +30,14 @@ export default function EconomicsDetail({ scenario, counts }) {
         <div>
           <div className="font-semibold mb-1">Состав парка в этом сценарии</div>
           <div className="text-[#6b5f7a]">
-            Пылесосы: {counts.vacuumCount} шт · Роборуки: {counts.armCount} шт
+            {[
+              ["Пылесосы", counts.vacuumCount],
+              ["Роборуки", counts.armCount],
+              ["Погрузчики", counts.loaderCount],
+            ]
+              .filter(([, count]) => count > 0)
+              .map(([label, count]) => `${label}: ${count} шт`)
+              .join(" · ")}
           </div>
         </div>
 

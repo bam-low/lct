@@ -1,13 +1,14 @@
 import * as THREE from "three";
 import { FLOOR, MARGIN } from "./layout.js";
-import { CANVAS_PX, PALETTE, ISO_ELEV, TRAIL_OPACITY } from "./constants.js";
+import { CANVAS_PX, PALETTE, ISO_ELEV, TRAIL_OPACITY, SCENE_HEIGHT_PX } from "./constants.js";
 import { applyColorSpace } from "./sceneUtils.js";
+import { createWalls } from "./walls.js";
+import { createChunkLabelLayer } from "./chunkLabels.js";
 
 const CAM_DIST = 108;
-const CANVAS_HEIGHT = 460;
 
 // Единоразовая сборка сцены: свет, пол (два слоя — статичный + след),
-// стеллажи, камера, рендерер. Возвращает всё, что нужно компоненту, чтобы
+// стены, стеллажи, камера, рендерер. Возвращает всё, что нужно компоненту, чтобы
 // не пересобирать сцену на каждый ре-рендер.
 export function createWarehouseScene(mount) {
   const width = mount.clientWidth;
@@ -23,6 +24,13 @@ export function createWarehouseScene(mount) {
   addFloor(scene, floorLayer.texture, trailLayer.texture);
   addCrates(scene);
 
+  const walls = createWalls();
+  scene.add(walls.group);
+
+  // Подписи чанков, «нарисованные» на полу; сетку им задаёт WarehouseScene.
+  const chunkLabels = createChunkLabelLayer();
+  scene.add(chunkLabels.mesh);
+
   const beltTexture = createBeltTexture();
 
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 500);
@@ -30,7 +38,7 @@ export function createWarehouseScene(mount) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
   renderer.setClearColor(0x000000, 0);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(width, CANVAS_HEIGHT);
+  renderer.setSize(width, SCENE_HEIGHT_PX);
   applyColorSpace(renderer, true);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.92;
@@ -40,7 +48,8 @@ export function createWarehouseScene(mount) {
 
   const vacuumGroup = new THREE.Group();
   const armGroup = new THREE.Group();
-  scene.add(vacuumGroup, armGroup);
+  const loaderGroup = new THREE.Group();
+  scene.add(vacuumGroup, armGroup, loaderGroup);
 
   const cameraState = { theta: Math.PI / 4, thetaTarget: Math.PI / 4, zoom: 40 };
 
@@ -54,10 +63,13 @@ export function createWarehouseScene(mount) {
     );
 
     camera.lookAt(0, 0, 0);
+
+    // Две стены, ближайшие к камере, растворяются — считаем от того же угла.
+    walls.update(t);
   };
 
   const applyFrustum = () => {
-    const a = mount.clientWidth / CANVAS_HEIGHT;
+    const a = mount.clientWidth / SCENE_HEIGHT_PX;
     const hh = cameraState.zoom;
 
     camera.left = -hh * a;
@@ -71,7 +83,7 @@ export function createWarehouseScene(mount) {
   applyFrustum();
 
   const onResize = () => {
-    renderer.setSize(mount.clientWidth, CANVAS_HEIGHT);
+    renderer.setSize(mount.clientWidth, SCENE_HEIGHT_PX);
     applyFrustum();
   };
 
@@ -81,6 +93,7 @@ export function createWarehouseScene(mount) {
     window.removeEventListener("resize", onResize);
     cancelAnimationFrame(raf);
     renderer.dispose();
+    chunkLabels.dispose();
 
     if (renderer.domElement.parentNode === mount) {
       mount.removeChild(renderer.domElement);
@@ -96,8 +109,10 @@ export function createWarehouseScene(mount) {
     trailCtx: trailLayer.ctx,
     trailTexture: trailLayer.texture,
     beltTexture,
+    chunkLabels,
     vacuumGroup,
     armGroup,
+    loaderGroup,
     cameraState,
     updateCamera,
     applyFrustum,

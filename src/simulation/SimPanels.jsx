@@ -7,7 +7,7 @@ export function Stat({ label, value }) {
   );
 }
 
-export function RobotCountPanel({ title, count, prod, prodUnit, onManualChange, min, max }) {
+export function RobotCountPanel({ title, count, description, onManualChange, min, max }) {
   return (
     <div className="bg-white/40 rounded-xl p-3 space-y-2">
       <div className="text-sm font-bold text-[#3F4159]">{title}</div>
@@ -30,9 +30,7 @@ export function RobotCountPanel({ title, count, prod, prodUnit, onManualChange, 
         </button>
       </div>
 
-      <div className="text-xs text-[#6b5f7a]">
-        Производительность одного робота: {prod.toFixed(0)} {prodUnit} (по выбранному решению в каталоге)
-      </div>
+      <div className="text-xs text-[#6b5f7a]">{description}</div>
     </div>
   );
 }

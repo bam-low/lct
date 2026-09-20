@@ -1,18 +1,12 @@
-import { FLOOR } from "./layout.js";
 import { PX_PER_M, VACUUM_SWATH } from "./constants.js";
+import { toPx, rectToPx } from "./canvasCoords.js";
 
-function toPx(worldX, worldZ) {
-  return { x: (worldX + FLOOR / 2) * PX_PER_M, z: (worldZ + FLOOR / 2) * PX_PER_M };
-}
-
-// Пиксельный прямоугольник чанка на текстуре следа — считается один раз при
+// Пиксельный прямоугольник участка на текстуре следа — считается один раз при
 // спавне робота и переиспользуется как область клипа при рисовании (чтобы
-// скруглённые концы полосы на разворотах не вылезали за границу чанка) и как
+// скруглённые концы полосы на разворотах не вылезали за границу участка) и как
 // область стирания при угасании следа по завершении уборки.
-export function chunkToPixelRect(chunk) {
-  const a = toPx(chunk.xMin, chunk.zMin);
-  const b = toPx(chunk.xMax, chunk.zMax);
-  return { x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), z0: Math.min(a.z, b.z), z1: Math.max(a.z, b.z) };
+export function sectorToPixelRect(sector) {
+  return rectToPx(sector.xMin, sector.xMax, sector.zMin, sector.zMax);
 }
 
 function clipToRect(ctx, rectPx) {
@@ -24,9 +18,9 @@ function clipToRect(ctx, rectPx) {
 // След — ровная белая полоса шириной с захват пылесоса. Рисуется непрозрачным
 // белым: полупрозрачность задаётся один раз на материале слоя (TRAIL_OPACITY),
 // поэтому перекрывающиеся куски полосы не дают ярких пятен на стыках.
-// Рисуется только внутри чанка робота (clipRectPx) — иначе скруглённые концы
+// Рисуется только внутри участка робота (clipRectPx) — иначе скруглённые концы
 // у разворотов выходят за его границу и не стираются при угасании
-// (destination-out бьёт строго по чанку).
+// (destination-out бьёт строго по участку).
 export function drawTrailSegment(ctx, fromWorld, toWorld, clipRectPx) {
   const from = toPx(fromWorld.x, fromWorld.z);
   const to = toPx(toWorld.x, toWorld.z);
