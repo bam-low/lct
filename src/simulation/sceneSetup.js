@@ -44,7 +44,10 @@ export function createWarehouseScene(mount) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.92;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // THREE.PCFSoftShadowMap был убран в этой версии three.js (рендерер тихо
+  // подменял его на жёсткий PCFShadowMap и заодно игнорировал keyLight.shadow.radius
+  // ниже — размытие край теней работает только с VSM/старым PCFSoft).
+  renderer.shadowMap.type = THREE.VSMShadowMap;
   mount.appendChild(renderer.domElement);
 
   const ghostMaterial = new THREE.MeshStandardMaterial({

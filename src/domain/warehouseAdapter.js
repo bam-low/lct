@@ -1,27 +1,29 @@
-// Адаптер «параметры склада + выбранные решения → нормализованные входы economics.js».
-// Единственный модуль, который придётся продублировать (adapters/airportAdapter.js,
-// adapters/medicalAdapter.js), когда другие типы объектов станут рабочими — сам
-// economics.js и структура сценария меняться не должны (ТЗ 4.2.6).
+// Адаптер «параметры склада + выбранные решения → нормализованные входы
+// scenarioEngine.js/economics.js». Единственный модуль, который придётся
+// продублировать (adapters/airportAdapter.js, adapters/medicalAdapter.js), когда
+// другие типы объектов станут рабочими: он даёт общему ядру (scenarioEngine.js)
+// пиковый спрос и эффективную производительность по формулам, специфичным для
+// склада, а само ядро расчёта экономики и структура сценария не меняются
+// (ТЗ 4.2.6).
 
-import {
-  requiredRobotCount,
-  capexTotal,
-  opexTotal,
-  annualEffect,
-  paybackPeriod,
-  roi,
-  tco,
-  linearDepreciationPerYear,
-} from "./economics.js";
-import { CHARGE_EFFICIENCY } from "../simulation/energy.js";
+import { computeGroupCounts, buildScenario, buildAllScenarios as buildAllScenariosGeneric, scaleSolutionCosts, hoursPerShift, operatingHoursPerDay } from "./scenarioEngine.js";
 import { LOAD_SLOWDOWN } from "../simulation/constants.js";
 import { selectOption } from "./objectTypes.js";
 
-const RESERVE_RATIO = 0.05;
 const LOADER_HANDLING_SECONDS = 25; // подъём/опускание вил, повороты, заезд в полосу и выезд за один рейс
 
-export const hoursPerShift = (params) => params.shiftHoursPerDay || 8;
-export const operatingHoursPerDay = (params) => hoursPerShift(params) * (params.shiftsPerDay || 1);
+// Допущение об одной агрегированной роли персонала (ТЗ 3.5.1 требует явно
+// документировать допущения). На реальном складе за один и тот же процесс
+// обычно отвечает несколько ролей с разными ФОТ и выработкой (например, по
+// демо-датасету организатора: отборщики, операторы погрузчиков, операторы
+// упаковки — 100/25/20 чел. с разными окладами); здесь они свёрнуты в одну
+// пару "staffCount × hourlyWage × manualProductivity".
+const STAFF_MODEL_ASSUMPTION =
+  "Персонал текущего процесса задан одной агрегированной ролью (численность × ставка × выработка), " +
+  "а не по фактическим ролям (отборщики, операторы погрузчиков, упаковка и т.д. со своими окладами) — " +
+  "упрощение для экспресс-оценки; для точного ФОТ нужна разбивка по ролям.";
+
+export { hoursPerShift, operatingHoursPerDay };
 
 // Во сколько раз ограничения планировки (колонны, узкие проходы) замедляют роботов.
 export const speedFactorOf = (params) => selectOption("warehouse", "layoutRestriction", params.layoutRestriction)?.speedFactor ?? 1;
@@ -58,15 +60,20 @@ export function vacuumPeakDemand(params, vacuumZoneAreaM2) {
   return vacuumZoneAreaM2 / hoursPerShift(params);
 }
 
-// Пиковая потребность сортировки, оп/ч — напрямую задаётся параметром объекта.
+// Пиковая потребность сортировки, оп/ч: среднечасовой поток параметра объекта,
+// переведённый в пиковый через peakLoadFactor (ТЗ 3.5.2 — считать роботов по
+// пиковой, а не средней нагрузке).
 export function armPeakDemand(params) {
-  return params.requiredSortThroughput ?? 0;
+  return (params.requiredSortThroughput ?? 0) * (params.peakLoadFactor ?? 1);
 }
 
 // Пиковая потребность погрузчиков, грузовых единиц/ч: принять входящий груз и
-// подать исходящий к воротам.
+// подать исходящий к воротам, тоже с поправкой на пиковый коэффициент. Сама
+// симуляция при этом продолжает ехать на среднечасовом потоке (params.requiredLoad/
+// OutboundThroughput без поправки) — так в «Подтверждении расчёта симуляцией»
+// видно резерв мощности парка, рассчитанного на пик, над средним фактическим потоком.
 export function loaderPeakDemand(params) {
-  return (params.requiredLoadThroughput ?? 0) + (params.requiredOutboundThroughput ?? 0);
+  return ((params.requiredLoadThroughput ?? 0) + (params.requiredOutboundThroughput ?? 0)) * (params.peakLoadFactor ?? 1);
 }
 
 // Потребность склада в операциях, которые сейчас делает персонал: то, что
@@ -78,201 +85,43 @@ export function currentProcessOf(params, { useArm, useLoader }) {
   return { demand, capacity, coveragePct: demand > 0 ? Math.min(999, (capacity / demand) * 100) : null };
 }
 
-// Количество роботов «по расчёту» (ТЗ 3.5.2) — единый источник для симуляции и экономики.
+// Количество роботов «по расчёту» (ТЗ 3.5.2) — единый источник для симуляции и
+// экономики. Собирает три процесса склада в общий формат scenarioEngine.js
+// (computeGroupCounts) и раскладывает результат обратно в именованные поля,
+// которые ждут остальные модули (useEconomicsState.js и т.д.).
 export function computeRobotCounts({ params, vacuumZoneAreaM2, vacuumSolution, armSolution, loaderSolution }) {
-  const vacuumThroughput = effectiveThroughput(vacuumSolution, params);
-  const vacuumPeak = vacuumPeakDemand(params, vacuumZoneAreaM2);
-
-  const vacuumCount = vacuumSolution
-    ? requiredRobotCount({
-        peakDemand: vacuumPeak,
-        throughputPerRobot: vacuumThroughput,
-        loadFactor: params.loadFactor,
-      })
-    : 0;
-
-  const armThroughput = effectiveThroughput(armSolution, params);
-  const armPeak = armPeakDemand(params);
-
-  const armCount = armSolution
-    ? requiredRobotCount({
-        peakDemand: armPeak,
-        throughputPerRobot: armThroughput,
-        loadFactor: params.loadFactor,
-      })
-    : 0;
-
-  const loaderThroughput = effectiveThroughput(loaderSolution, params);
-  const loaderPeak = loaderPeakDemand(params);
-
-  const loaderCount = loaderSolution
-    ? requiredRobotCount({
-        peakDemand: loaderPeak,
-        throughputPerRobot: loaderThroughput,
-        loadFactor: params.loadFactor,
-      })
-    : 0;
+  const groups = computeGroupCounts(params, [
+    { key: "vacuum", solution: vacuumSolution, peakDemand: vacuumPeakDemand(params, vacuumZoneAreaM2), throughputPerRobot: effectiveThroughput(vacuumSolution, params) },
+    { key: "arm", solution: armSolution, peakDemand: armPeakDemand(params), throughputPerRobot: effectiveThroughput(armSolution, params) },
+    { key: "loader", solution: loaderSolution, peakDemand: loaderPeakDemand(params), throughputPerRobot: effectiveThroughput(loaderSolution, params) },
+  ]);
 
   return {
-    vacuumCount,
-    vacuumThroughput,
-    vacuumPeak,
-    armCount,
-    armThroughput,
-    armPeak,
-    loaderCount,
-    loaderThroughput,
-    loaderPeak,
+    vacuumCount: groups.vacuum.count,
+    vacuumThroughput: groups.vacuum.throughputPerRobot,
+    vacuumPeak: groups.vacuum.peakDemand,
+    armCount: groups.arm.count,
+    armThroughput: groups.arm.throughputPerRobot,
+    armPeak: groups.arm.peakDemand,
+    loaderCount: groups.loader.count,
+    loaderThroughput: groups.loader.throughputPerRobot,
+    loaderPeak: groups.loader.peakDemand,
   };
-}
-
-// Электроэнергия за год, ₽: работа и простой в смену с учётом коэффициента
-// загрузки. Робот с батареей берёт из сети больше, чем расходует, — потери
-// зарядки (CHARGE_EFFICIENCY). Для симуляции те же цифры считает energy.js.
-function energyCostPerYear(solution, count, params) {
-  const energy = solution.technical.energy;
-  if (!energy) return 0;
-
-  const shiftHours = operatingHoursPerDay(params) * (params.daysPerYear ?? 0);
-  const load = params.loadFactor ?? 1;
-  const usedKwh = (energy.workPowerKw * load + energy.idlePowerKw * (1 - load)) * shiftHours;
-  const gridKwh = solution.technical.autonomyHours ? usedKwh / CHARGE_EFFICIENCY : usedKwh;
-
-  return count * gridKwh * (params.electricityTariff ?? 0);
-}
-
-function groupEconomics(solution, count, kind, params) {
-  if (!solution || count <= 0) {
-    return { equipment: 0, software: 0, integration: 0, service: 0, repair: 0, energy: 0, lifespanYears: 0 };
-  }
-
-  const e = solution.economics;
-  const energy = energyCostPerYear(solution, count, params);
-
-  if (kind === "raas") {
-    return {
-      equipment: 0,
-      software: 0,
-      integration: 0,
-      service: count * (e.raas?.monthlyRate ?? 0) * 12,
-      repair: 0,
-      energy,
-      lifespanYears: e.lifespanYears,
-    };
-  }
-
-  return {
-    equipment: count * e.equipmentCost,
-    software: count * e.softwareCost,
-    integration: count * e.implementationCost,
-    service: count * e.serviceCostPerYear,
-    repair: count * e.maintenanceCostPerYear,
-    energy,
-    lifespanYears: e.lifespanYears,
-  };
-}
-
-function baselineOpexOf(params) {
-  return (
-    (params.staffCount ?? 0) *
-    (params.hourlyWage ?? 0) *
-    (params.shiftHoursPerDay ?? 0) *
-    (params.daysPerYear ?? 0)
-  );
-}
-
-function weightedLifespan(...groups) {
-  const spans = groups.map((g) => g.lifespanYears).filter((v) => v > 0);
-  if (spans.length === 0) return 0;
-  return spans.reduce((a, b) => a + b, 0) / spans.length;
 }
 
 // Строит один сценарий: 'baseline' | 'purchase' | 'raas'.
 // counts — { vacuumCount, armCount, loaderCount }, обычно из computeRobotCounts(), но может
 // быть подменено вручную (what-if / ручная корректировка — ТЗ 3.5.3–3.5.4).
 export function buildWarehouseScenario(kind, { params, vacuumSolution, armSolution, loaderSolution, counts }) {
-  const baselineOpex = baselineOpexOf(params);
-
-  if (kind === "baseline") {
-    return {
-      kind,
-      capex: 0,
-      opexPerYear: baselineOpex,
-      effect: 0,
-      paybackYears: null,
-      roiPct: null,
-      tcoValue: baselineOpex * (params.horizonYears ?? 5),
-      depreciationPerYear: 0,
-      assumptions: {
-        laborSavingsAssumption:
-          "Базовый сценарий — текущий ручной процесс, эффект не считается относительно самого себя.",
-      },
-    };
-  }
-
-  const vacuumEcon = groupEconomics(vacuumSolution, counts.vacuumCount, kind, params);
-  const armEcon = groupEconomics(armSolution, counts.armCount, kind, params);
-  const loaderEcon = groupEconomics(loaderSolution, counts.loaderCount ?? 0, kind, params);
-  const groups = [vacuumEcon, armEcon, loaderEcon];
-  const sumOf = (field) => groups.reduce((sum, g) => sum + g[field], 0);
-
-  const rawCapex = capexTotal({
-    equipment: sumOf("equipment"),
-    software: sumOf("software"),
-    integration: sumOf("integration"),
+  return buildScenario(kind, {
+    params,
+    groups: [
+      { solution: vacuumSolution, count: counts.vacuumCount },
+      { solution: armSolution, count: counts.armCount },
+      { solution: loaderSolution, count: counts.loaderCount ?? 0 },
+    ],
+    extraAssumptions: { staffModelAssumption: STAFF_MODEL_ASSUMPTION },
   });
-
-  const capex = rawCapex + rawCapex * RESERVE_RATIO;
-
-  const opexPerYear = opexTotal({
-    service: sumOf("service"),
-    repair: sumOf("repair"),
-    energy: sumOf("energy"),
-  });
-
-  const effect = annualEffect({
-    laborSavings: baselineOpex,
-    additionalOpex: opexPerYear,
-  });
-
-  const horizonYears = params.horizonYears ?? 5;
-  const lifespanYears = weightedLifespan(...groups);
-
-  return {
-    kind,
-    capex,
-    opexPerYear,
-    effect,
-    paybackYears: paybackPeriod(capex, effect),
-    roiPct: roi(effect, capex, horizonYears),
-    tcoValue: tco({ capex, opexPerYear, horizonYears, lifespanYears }),
-    depreciationPerYear: linearDepreciationPerYear(capex, lifespanYears),
-    assumptions: {
-      laborSavingsAssumption:
-        "Допущение: роботизация полностью заменяет ручной труд на данном процессе — экономия труда = текущий ФОТ процесса.",
-      reserveRatio: RESERVE_RATIO,
-      lifespanYears,
-    },
-  };
-}
-
-function scaleSolutionCosts(solution, factor) {
-  if (!solution) return null;
-
-  const e = solution.economics;
-
-  return {
-    ...solution,
-    economics: {
-      ...e,
-      equipmentCost: e.equipmentCost * factor,
-      softwareCost: e.softwareCost * factor,
-      implementationCost: e.implementationCost * factor,
-      maintenanceCostPerYear: e.maintenanceCostPerYear * factor,
-      serviceCostPerYear: e.serviceCostPerYear * factor,
-      raas: e.raas ? { ...e.raas, monthlyRate: e.raas.monthlyRate * factor } : e.raas,
-    },
-  };
 }
 
 // What-if / sensitivity (ТЗ 3.5.6): пересчёт сценария "покупка" при сдвиге
@@ -322,12 +171,13 @@ export function buildSensitivityScenario({
 // отдельной утилитой для тех мест, где нужна именно расчётная рекомендация
 // (например, стартовое значение или SensitivityPanel).
 export function buildAllScenarios({ params, vacuumSolution, armSolution, loaderSolution, counts }) {
-  const input = { params, vacuumSolution, armSolution, loaderSolution, counts };
-
-  return {
-    counts,
-    baseline: buildWarehouseScenario("baseline", input),
-    purchase: buildWarehouseScenario("purchase", input),
-    raas: buildWarehouseScenario("raas", input),
-  };
+  return buildAllScenariosGeneric({
+    params,
+    groups: [
+      { solution: vacuumSolution, count: counts.vacuumCount },
+      { solution: armSolution, count: counts.armCount },
+      { solution: loaderSolution, count: counts.loaderCount ?? 0 },
+    ],
+    extraAssumptions: { staffModelAssumption: STAFF_MODEL_ASSUMPTION },
+  });
 }

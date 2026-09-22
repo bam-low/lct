@@ -7,12 +7,14 @@ export function Stat({ label, value }) {
   );
 }
 
-export function RobotCountPanel({ title, count, description, onManualChange, min, max }) {
+export function RobotCountPanel({ title, count, description, onManualChange, min, max, recommended }) {
+  const onRecommendation = recommended !== undefined && count === recommended;
+
   return (
     <div className="bg-white/40 rounded-xl p-3 space-y-2">
       <div className="text-sm font-bold text-[#3F4159]">{title}</div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={() => onManualChange(Math.max(min, count - 1))}
           disabled={count <= min}
@@ -28,6 +30,18 @@ export function RobotCountPanel({ title, count, description, onManualChange, min
         >
           +
         </button>
+
+        {recommended !== undefined &&
+          (onRecommendation ? (
+            <span className="text-xs text-[#6b5f7a] ml-1">по расчёту: {recommended}</span>
+          ) : (
+            <button
+              onClick={() => onManualChange(Math.max(min, Math.min(max, recommended)))}
+              className="text-xs px-2 py-1 rounded-full bg-white/80 hover:bg-white text-[#3F4159] font-semibold shadow-sm ml-1"
+            >
+              ↺ по расчёту: {recommended}
+            </button>
+          ))}
       </div>
 
       <div className="text-xs text-[#6b5f7a]">{description}</div>

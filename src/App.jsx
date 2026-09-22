@@ -3,10 +3,13 @@ import { useEconomicsState } from "./state/useEconomicsState.js";
 import { getObjectType, selectOption } from "./domain/objectTypes.js";
 import { vacuumPeakDemand, armPeakDemand, loaderPeakDemand } from "./domain/warehouseAdapter.js";
 import { catalogFor } from "./domain/catalog.js";
+import { checkBudget } from "./domain/applicability.js";
+import { formatCurrencyRUB } from "./domain/economics.js";
 import WarehouseScene from "./simulation/WarehouseScene.jsx";
 import ObjectTypeSelect from "./components/economics/ObjectTypeSelect.jsx";
 import RobotTypesSelect from "./components/economics/RobotTypesSelect.jsx";
 import ParamsForm from "./components/economics/ParamsForm.jsx";
+import ParamsFileImport from "./components/economics/ParamsFileImport.jsx";
 import SolutionPicker from "./components/economics/SolutionPicker.jsx";
 import ScenarioComparisonTable from "./components/economics/ScenarioComparisonTable.jsx";
 import EconomicsDetail from "./components/economics/EconomicsDetail.jsx";
@@ -65,6 +68,8 @@ export default function App() {
 
             <RobotTypesSelect selected={eco.robotTypes} onSelect={eco.setRobotTypes} />
 
+            <ParamsFileImport objectType={objectType} params={eco.params} onApply={eco.setParams} />
+
             <ParamsForm objectType={objectType} params={eco.params} onChange={eco.setParam} />
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -74,6 +79,7 @@ export default function App() {
                   options={catalogFor(eco.objectTypeId, "floor_cleaning")}
                   selectedId={vacuumSolution?.id}
                   onChange={eco.setVacuumSolutionId}
+                  params={params}
                 />
               )}
               {useArm && (
@@ -82,6 +88,7 @@ export default function App() {
                   options={catalogFor(eco.objectTypeId, "sorting")}
                   selectedId={armSolution?.id}
                   onChange={eco.setArmSolutionId}
+                  params={params}
                 />
               )}
               {useLoader && (
@@ -90,6 +97,7 @@ export default function App() {
                   options={catalogFor(eco.objectTypeId, "loading")}
                   selectedId={loaderSolution?.id}
                   onChange={eco.setLoaderSolutionId}
+                  params={params}
                 />
               )}
             </div>
@@ -128,6 +136,9 @@ export default function App() {
               armCount={eco.counts.armCount}
               armProd={eco.throughputs.arm / 60}
               loaderCount={eco.counts.loaderCount}
+              recommendedVacuumCount={eco.recommendedCounts.vacuumCount}
+              recommendedArmCount={eco.recommendedCounts.armCount}
+              recommendedLoaderCount={eco.recommendedCounts.loaderCount}
               loaderCapacityKg={loaderSolution?.technical.capacityKg ?? 100}
               loaderSpeedMps={(loaderSolution?.technical.speed ?? 2) * eco.speedFactor}
               loaderThroughput={eco.throughputs.loader}
@@ -152,6 +163,19 @@ export default function App() {
               activeScenario={eco.activeScenario}
               onSelectScenario={eco.setActiveScenario}
             />
+
+            {(() => {
+              const budget = eco.activeScenario !== "baseline" ? checkBudget(activeScenario.capex, params.budgetCapexMRub) : null;
+              if (!budget) return null;
+
+              return (
+                <p className={`text-sm rounded-xl px-4 py-3 ${budget.withinBudget ? "bg-white/40 text-[#3F4159]" : "bg-[#f6d9d9] text-[#9C3B3B] font-semibold"}`}>
+                  Бюджет на роботизацию: {params.budgetCapexMRub} млн ₽. Расчётный CAPEX сценария «{SCENARIO_LABELS[eco.activeScenario]}»:{" "}
+                  {formatCurrencyRUB(activeScenario.capex)}
+                  {budget.withinBudget ? " — укладывается." : ` — превышает бюджет на ${formatCurrencyRUB(budget.overBy)}.`}
+                </p>
+              );
+            })()}
 
             {eco.currentProcess.demand > 0 && (
               <p className="text-sm text-[#3F4159] bg-white/40 rounded-xl px-4 py-3">

@@ -131,6 +131,28 @@ export function useEconomicsState() {
     loaderCount: layout.useLoader ? clamp(state.manualLoaderCount, MAX_LOADER_COUNT) : 0,
   };
 
+  // Расчётная рекомендация «по ТЗ 3.5.2» — пересчитывается на каждое изменение
+  // параметров/решения, чтобы степпер мог показать актуальное «по расчёту: N»
+  // и вернуть к нему одним кликом, а не только один раз при первой загрузке.
+  const recommended = useMemo(
+    () =>
+      computeRobotCounts({
+        params: perFloorParams(state.params),
+        vacuumZoneAreaM2: floorVacuumZoneAreaM2,
+        vacuumSolution: activeSolutions.vacuum,
+        armSolution: activeSolutions.arm,
+        loaderSolution: activeSolutions.loader,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.params, floorVacuumZoneAreaM2, state.vacuumSolutionId, state.armSolutionId, state.loaderSolutionId, typesKey]
+  );
+
+  const recommendedCounts = {
+    vacuumCount: layout.useVacuum ? clamp(recommended.vacuumCount, MAX_VACUUM_COUNT) : 0,
+    armCount: layout.useArm ? clamp(recommended.armCount, layout.maxArmCount) : 0,
+    loaderCount: layout.useLoader ? clamp(recommended.loaderCount, MAX_LOADER_COUNT) : 0,
+  };
+
   // Энергопрофили выбранных решений: время работы на зарядке, мощность и т.д.
   // Считаются здесь, чтобы у сцены была стабильная ссылка и она не пересобиралась зря.
   const energyProfiles = useMemo(
@@ -175,6 +197,10 @@ export function useEconomicsState() {
   const setParam = (key, value) =>
     setState((s) => ({ ...s, params: { ...s.params, [key]: value } }));
 
+  // Массовое применение — например, после загрузки параметров из файла
+  // (ТЗ 3.2.3), одним обновлением состояния вместо цепочки setParam.
+  const setParams = (partial) => setState((s) => ({ ...s, params: { ...s.params, ...partial } }));
+
   const setRobotTypes = (types) => setState((s) => ({ ...s, robotTypes: normalizeRobotTypes(types) }));
 
   const setVacuumSolutionId = (id) => setState((s) => ({ ...s, vacuumSolutionId: id }));
@@ -198,6 +224,7 @@ export function useEconomicsState() {
     activeSolutions,
     energyProfiles,
     counts,
+    recommendedCounts,
     totalCounts,
     workZoneShare,
     speedFactor: speedFactorOf(state.params),
@@ -211,6 +238,7 @@ export function useEconomicsState() {
     scenarios,
 
     setParam,
+    setParams,
     setRobotTypes,
     setVacuumSolutionId,
     setArmSolutionId,

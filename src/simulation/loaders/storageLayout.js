@@ -136,3 +136,14 @@ export const laneCapacity = (lane) => lane.slots.length * MAX_LAYERS;
 export const laneHasPickable = (lane) => topSlotIndex(lane) >= 0 && lane.slots.every((slot) => slot.reserved === 0);
 
 export const laneAnchor = (lane) => ({ ai: lane.aisleIndex, x: lane.x });
+
+// ----------------------------------------------------------
+// Остатки на площадке и в хранении одних ворот
+// (gate — ворота из loaderSystem: gate.dock.lanes — площадка, gate.storageLanes — хранение)
+// ----------------------------------------------------------
+
+export const gateDockUnits = (gate) => gate.dock.lanes.reduce((sum, lane) => sum + laneUnitCount(lane), 0);
+export const gateDockFreeCapacity = (gate) => gate.dock.lanes.reduce((sum, lane) => sum + laneFreeCapacity(lane), 0);
+export const gateStorageFreeCapacity = (gate) => gate.storageLanes.reduce((sum, lane) => sum + laneFreeCapacity(lane), 0);
+export const gateStorageUnits = (gate) => gate.storageLanes.reduce((sum, lane) => sum + laneUnitCount(lane), 0);
+export const gateStorageCapacity = (gate) => gate.storageLanes.reduce((sum, lane) => sum + laneCapacity(lane), 0);

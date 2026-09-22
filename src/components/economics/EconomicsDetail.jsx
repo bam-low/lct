@@ -56,7 +56,10 @@ export default function EconomicsDetail({ scenario, counts, floors = 1 }) {
 
         <div>
           <div className="font-semibold mb-1">Допущения</div>
-          <div className="text-[#6b5f7a]">{scenario.assumptions.laborSavingsAssumption}</div>
+          <div className="text-[#6b5f7a] space-y-1">
+            <p>{scenario.assumptions.laborSavingsAssumption}</p>
+            {scenario.assumptions.staffModelAssumption && <p>{scenario.assumptions.staffModelAssumption}</p>}
+          </div>
         </div>
       </div>
     </details>

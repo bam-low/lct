@@ -23,23 +23,22 @@ import {
   topSlotIndex,
   laneUnitCount,
   laneFreeCapacity,
-  laneCapacity,
   laneHasPickable,
   laneAnchor,
+  gateDockUnits,
+  gateStorageFreeCapacity,
+  gateStorageUnits,
+  gateStorageCapacity,
 } from "./storageLayout.js";
 import { routeBetween, routeLength } from "./roads.js";
 import { findBlocker } from "./traffic.js";
 import { createTruckBay } from "./truckBay.js";
+import { createGateOperations } from "./gateOperations.js";
 
 const ARRIVE_EPS = 0.02;
 const ROTATE_EPS = 0.02;
 const AIM_MIN_DISTANCE = 0.4; // ближе этого к цели погрузчик уже не доворачивает — иначе на подходе рыскал бы
 
-const UNLOAD_INTERVAL = 0.22; // с между единицами груза, выезжающими из фуры
-const FLIGHT_SECONDS = 0.9; // сколько груз летит от кузова до площадки и обратно
-const FLIGHT_ARC = 1.6;
-const OUTBOUND_WAIT_SECONDS = 20; // сколько фура ждёт недостающий груз, прежде чем уехать неполной
-const MAX_TRUCKS_WAITING = 2; // сколько фур одних ворот ждут своей очереди
 const GATE_STAGGER_SECONDS = 5; // на сколько позже первая фура приезжает к каждым следующим воротам
 
 const angleDiff = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - from));
@@ -111,16 +110,13 @@ export function createLoaderSystem({
     loaders: [],
   }));
 
-  const flights = []; // единицы, летящие между кузовом и площадкой
+  const gateOps = createGateOperations({ group, gates, cargoFactory, payload, arrivalInterval });
+  const { counters } = gateOps;
   const loaders = Array.from({ length: Math.min(count, gates.length) }, (_, index) => createLoader(index));
 
   let time = 0;
-  let receivedUnits = 0;
-  let shippedUnits = 0;
   let movedUnits = 0;
   let routeUnitsTotal = 0; // суммарная длина маршрутов (ед. сцены) перевезённых единиц
-  let trucksIn = 0;
-  let trucksOut = 0;
 
   const yard = addYard(group);
 
@@ -356,7 +352,7 @@ export function createLoaderSystem({
 
       if (gate.mode === "loading") {
         const from = pickDockLaneToStore(gate);
-        const to = from && storageFreeCapacity(gate) > 0 ? pickStorageLane(gate, from) : null;
+        const to = from && gateStorageFreeCapacity(gate) > 0 ? pickStorageLane(gate, from) : null;
 
         if (from && to) {
           const origin = from.slots[topSlotIndex(from)].units.at(-1).userData.origin;
@@ -509,21 +505,16 @@ export function createLoaderSystem({
   function step(dt) {
     time += dt;
 
-    for (const gate of gates) {
-      updateDispatch(gate, dt);
-      updateBay(gate, dt);
-      updateMode(gate);
-    }
-
-    updateFlights(dt);
+    gateOps.step(dt);
     loaders.forEach((loader) => updateLoader(loader, dt));
   }
 
   const sum = (fn) => gates.reduce((total, gate) => total + fn(gate), 0);
+  const totalStorageCapacity = () => sum(gateStorageCapacity);
 
   function getStats() {
-    const stored = sum(storageUnits);
-    const capacity = sum((gate) => gate.storageLanes.reduce((total, lane) => total + laneCapacity(lane), 0));
+    const stored = sum(gateStorageUnits);
+    const capacity = totalStorageCapacity();
     const modes = new Set(gates.map((gate) => gate.mode));
 
     return {
@@ -531,28 +522,28 @@ export function createLoaderSystem({
       cycles: Math.min(...gates.map((gate) => gate.cycles)),
       storedKg: Math.round(stored * cargoWeightKg),
       fillPercent: Math.round((stored / capacity) * 100),
-      dockUnits: sum(dockUnits),
+      dockUnits: sum(gateDockUnits),
       trucksAtGates: gates.filter((gate) => gate.bay.busy).length,
       trucksWaiting: sum((gate) => gate.trucksWaiting),
-      trucksIn,
-      trucksOut,
-      receivedKg: Math.round(receivedUnits * cargoWeightKg),
-      shippedKg: Math.round(shippedUnits * cargoWeightKg),
+      trucksIn: counters.trucksIn,
+      trucksOut: counters.trucksOut,
+      receivedKg: Math.round(counters.received * cargoWeightKg),
+      shippedKg: Math.round(counters.shipped * cargoWeightKg),
       // Фактические потоки за время работы: перевезено погрузчиками, принято и
       // отгружено (единиц в час), и средняя длина маршрута груза, м.
       movedPerHour: time > 60 ? Math.round((movedUnits * 3600) / time) : 0,
-      receivedPerHour: time > 60 ? Math.round((receivedUnits * 3600) / time) : 0,
-      shippedPerHour: time > 60 ? Math.round((shippedUnits * 3600) / time) : 0,
+      receivedPerHour: time > 60 ? Math.round((counters.received * 3600) / time) : 0,
+      shippedPerHour: time > 60 ? Math.round((counters.shipped * 3600) / time) : 0,
       avgRouteM: movedUnits > 0 ? Math.round((routeUnitsTotal / movedUnits) * metersPerUnit) : 0,
       // Занятость погрузчиков: сколько сейчас на задании.
       busyLoaders: loaders.filter((loader) => !loader.atBay && loader.steps.length > 0).length,
     };
   }
 
-  // Убирает со сцены всё, что создала система, и освобождает её ресурсы.
+  // Убирает со сцены всё, что создала система, и освобождает её ресурсы (фуры и
+  // летящий груз — через gateOps, свои: площадка фур и фабрика груза).
   function dispose() {
-    for (const gate of gates) gate.bay.dispose();
-    for (const flight of flights) group.remove(flight.unit);
+    gateOps.dispose();
 
     group.remove(yard);
     yard.geometry.dispose();
@@ -566,6 +557,6 @@ export function createLoaderSystem({
     dispose,
     meters: loaders.map((loader) => loader.meter),
     payload,
-    storageCapacityUnits: sum((gate) => gate.storageLanes.reduce((total, lane) => total + laneCapacity(lane), 0)),
+    storageCapacityUnits: totalStorageCapacity(),
   };
 }

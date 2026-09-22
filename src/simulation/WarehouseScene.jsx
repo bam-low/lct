@@ -32,6 +32,9 @@ export default function WarehouseScene({
   armCount,
   armProd,
   loaderCount,
+  recommendedVacuumCount,
+  recommendedArmCount,
+  recommendedLoaderCount,
   loaderCapacityKg,
   loaderSpeedMps,
   loaderThroughput,
@@ -219,6 +222,7 @@ export default function WarehouseScene({
             onManualChange={onManualVacuumCountChange}
             min={1}
             max={MAX_VACUUM_COUNT}
+            recommended={recommendedVacuumCount}
           />
         )}
 
@@ -230,6 +234,7 @@ export default function WarehouseScene({
             onManualChange={onManualArmCountChange}
             min={1}
             max={layout.maxArmCount}
+            recommended={recommendedArmCount}
           />
         )}
 
@@ -241,6 +246,7 @@ export default function WarehouseScene({
             onManualChange={onManualLoaderCountChange}
             min={1}
             max={MAX_LOADER_COUNT}
+            recommended={recommendedLoaderCount}
           />
         )}
       </div>

@@ -96,22 +96,6 @@ export function linearDepreciationPerYear(capex, lifespanYears) {
   return capex / lifespanYears;
 }
 
-// Пересчёт сценария с процентным сдвигом одного входа — для what-if/sensitivity.
-export function buildSensitivity(baseInputs, computeScenario, param, deltas) {
-  return deltas.map((deltaPct) => {
-    const factor = 1 + deltaPct / 100;
-
-    const shifted = {
-      ...baseInputs,
-      [param]: baseInputs[param] * factor,
-    };
-
-    const result = computeScenario(shifted);
-
-    return { deltaPct, ...result };
-  });
-}
-
 export function paybackBucket(years) {
   if (years === null || years === undefined) return "none";
   if (years <= 3) return "fast";
