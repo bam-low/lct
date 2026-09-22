@@ -37,6 +37,13 @@ export function createCargoFactory({ lengthCm = 120, widthCm = 80, heightCm = 10
   let counter = 0;
 
   return {
+    // Геометрии принадлежат фабрике (материалы общие, их не трогаем).
+    dispose() {
+      palletGeometry.dispose();
+      crateGeometry.dispose();
+      strapGeometry.dispose();
+    },
+
     // Шаг по высоте между единицами в стопке и глубина поддона вдоль вил.
     unitHeight: PALLET_HEIGHT + crateHeight + UNIT_GAP,
     depth: along + PALLET_OVERHANG,

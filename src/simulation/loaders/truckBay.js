@@ -43,6 +43,14 @@ export function createTruckBay({ group, gateX, gateIndex, speed }) {
     truck.z = z;
   }
 
+  function removeTruck() {
+    if (!truck) return;
+
+    group.remove(truck.model.group);
+    truck.model.dispose();
+    truck = null;
+  }
+
   function begin(kind) {
     const model = makeTruck();
     group.add(model.group);
@@ -93,10 +101,7 @@ export function createTruckBay({ group, gateX, gateIndex, speed }) {
 
         place(truck.z - truck.leaveSpeed * dt, -1, false);
 
-        if (REAR_Z - truck.z > DEPART_DISTANCE) {
-          group.remove(truck.model.group);
-          truck = null;
-        }
+        if (REAR_Z - truck.z > DEPART_DISTANCE) removeTruck();
         break;
       }
 
@@ -108,6 +113,9 @@ export function createTruckBay({ group, gateX, gateIndex, speed }) {
   return {
     begin,
     update,
+
+    // Убирает фуру со сцены (при пересборке склада).
+    dispose: removeTruck,
 
     // Фура закончила: закрывает двери и уезжает.
     depart() {

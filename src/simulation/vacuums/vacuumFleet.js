@@ -14,12 +14,16 @@ import { dodgeX } from "../obstacles.js";
 import { drawTrailSegment, fadeTrailRect, clearTrailRect, sectorToPixelRect, TRAIL_FADE_SECONDS } from "../trail.js";
 import { makeVacuumRobot } from "../robots/vacuumRobot.js";
 import { createEnergyMeter } from "../energy.js";
-import { chargingStationPositions, createCharger, STATION_HEADING } from "./chargingStations.js";
-import { steerAround, pushOut, bodyBox } from "./avoidance.js";
+import { chargingStationPositions, createCharger, STATION_HEADING, STATION_APPROACH_DISTANCE } from "./chargingStations.js";
+import { steerAround, pushOut, bodyBox, TIGHT_DISTANCE } from "./avoidance.js";
+import { planRoute } from "./routing.js";
 
 const ARRIVE_EPS = 0.15;
 const TURN_RATE = 6; // рад/с — как быстро едущий робот поворачивается
 const RETURN_SLACK = 1.3; // запас времени на объезды по дороге к станции
+const PASS_REST_SECONDS = 20; // сколько робот стоит на станции между проходами уборки
+const APPROACH_REACHED = 1.2; // на каком расстоянии от точки подъезда считаем, что робот на ней
+const WAYPOINT_REACHED = 1.0; // на каком расстоянии от промежуточной точки маршрута робот сворачивает к следующей
 const EPS = 1e-6;
 const MARK_RADIUS = (VACUUM_SWATH / 2) * 1.2;
 
@@ -41,7 +45,10 @@ function sortByDistanceFromCorner(sectors) {
 // Флот пылесосов. Каждый убирает свой сектор «змейкой» и живёт по циклу:
 //
 //   toWork → working → (батарея на исходе) toStation → charging → toWork → …
-//                    → (сектор убран)      toStation → parked
+//                    → (сектор убран)      toStation → charging → новый проход → toWork …
+//
+// Цикл бесконечный: убрав сектор, робот едет на станцию, заряжается до полной,
+// ждёт, пока растворится след, и начинает уборку сектора заново.
 //
 // Стартуют пылесосы с частично заряженной батареей (VACUUM_START_SOC) и сразу
 // едут работать; заряжаются уже потом, когда батарея на исходе.
@@ -98,7 +105,12 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
       dirZ: 1,
       heading: STATION_HEADING,
       state: "toWork",
-      finished: false,
+      approach: true, // сначала выехать на точку подъезда у станции, потом к цели
+      route: [], // путевые точки в обход роборук
+      routeKey: "",
+      finished: false, // сектор убран, идёт возвращение и подготовка к новому проходу
+      passes: 0, // сколько проходов уборки закончено
+      restLeft: 0,
       fading: false,
       fadeTime: 0,
     };
@@ -123,7 +135,7 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
   const isTransit = (robot) => robot.state === "toWork" || robot.state === "toStation";
 
   function obstaclesFor(robot) {
-    const boxes = [...obstacles];
+    const boxes = [];
     const circles = [];
 
     for (const other of robots) {
@@ -151,17 +163,63 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
       return true;
     }
 
+    // Роборуки обходит маршрут (routing.js), а уворачивается робот только от других роботов.
     const { boxes, circles } = obstaclesFor(robot);
     const dir = steerAround(robot.pos, { x: dx / distance, z: dz / distance }, boxes, circles);
 
     robot.pos.x += dir.x * step;
     robot.pos.z += dir.z * step;
-    pushOut(robot.pos, boxes, circles);
+    pushOut(robot.pos, { arms: obstacles, boxes, circles, tight: distance < TIGHT_DISTANCE });
 
     robot.heading = turnToward(robot.heading, Math.atan2(dir.x, dir.z), TURN_RATE * dt);
     placeAt(robot, robot.pos.x, robot.pos.z, robot.heading);
 
     return false;
+  }
+
+  // Едет к цели по маршруту в обход роборук; true — приехал.
+  function driveAlong(robot, goal, dt) {
+    const key = `${goal.x.toFixed(2)},${goal.z.toFixed(2)}`;
+
+    if (robot.routeKey !== key) {
+      robot.route = planRoute(robot.pos, goal, obstacles);
+      robot.routeKey = key;
+    }
+
+    const next = robot.route[0];
+    const last = robot.route.length === 1;
+
+    if (!last && Math.hypot(next.x - robot.pos.x, next.z - robot.pos.z) < WAYPOINT_REACHED) {
+      robot.route.shift();
+      return false;
+    }
+
+    const arrived = driveToward(robot, next, dt);
+
+    if (arrived && !last) robot.route.shift();
+    if (arrived && last) robot.routeKey = "";
+
+    return arrived && last;
+  }
+
+  // Едет к цели через точку подъезда у своей станции: и к станции, и от неё
+  // пылесосы ездят только по прямой с севера — в ряду станций иначе не проехать
+  // (соседние станции заняты). Без этого робот упирался бы в стоящих соседей и
+  // застревал.
+  function driveVia(robot, target, dt) {
+    if (robot.approach) {
+      const point = { x: robot.station.x, z: robot.station.z - STATION_APPROACH_DISTANCE };
+      const alignedAlready = robot.state === "toStation" && robot.pos.z >= point.z - 0.5 && Math.abs(robot.pos.x - point.x) < 2.5;
+
+      if (alignedAlready || driveAlong(robot, point, dt) || Math.hypot(point.x - robot.pos.x, point.z - robot.pos.z) < APPROACH_REACHED) {
+        robot.approach = false;
+        robot.routeKey = "";
+      }
+
+      return false;
+    }
+
+    return driveAlong(robot, target, dt);
   }
 
   // Где робот должен стоять, чтобы продолжить уборку (с учётом объезда).
@@ -203,6 +261,30 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
     return newly;
   }
 
+  // Новый проход: сектор снова не убран, робот встаёт в начало первого ряда.
+  function startNewPass(robot) {
+    const s = robot.sector;
+
+    robot.passes++;
+    robot.finished = false;
+    robot.rowIdx = 0;
+    robot.dirZ = 1;
+    robot.x = robot.rowCenters[0];
+    robot.z = s.zMin;
+    robot.lastDrawn = { x: robot.x, z: robot.z };
+
+    // Убранное в прошлом проходе снова считается неубранным.
+    for (let gx = 0; gx < GRID; gx++) {
+      const wx = gx - FLOOR / 2 + 0.5;
+      if (wx < s.xMin - EPS || wx > s.xMax + EPS) continue;
+
+      for (let gz = 0; gz < GRID; gz++) {
+        const wz = gz - FLOOR / 2 + 0.5;
+        if (wz >= s.zMin - EPS && wz <= s.zMax + EPS) grid[gz * GRID + gx] = 0;
+      }
+    }
+  }
+
   // Хватит ли заряда доехать до станции прямо отсюда (с запасом)?
   function mustReturnToStation(robot) {
     if (!robot.meter.hasBattery) return false;
@@ -226,6 +308,7 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
       if (robot.rowIdx >= robot.rowCenters.length) {
         robot.finished = true;
         robot.fading = true; // след растворяется, как только сектор убран
+        robot.fadeTime = 0;
       } else {
         robot.dirZ *= -1;
         robot.x = robot.rowCenters[robot.rowIdx];
@@ -255,13 +338,24 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
 
     switch (robot.state) {
       case "charging":
+        // Стоим на станции: заряжаемся и потребляем в режиме ожидания.
+        robot.meter.consume(dt, "idle");
         robot.meter.charge(dt);
-        if (robot.meter.isFull()) robot.state = "toWork";
+
+        if (robot.finished) robot.restLeft -= dt;
+
+        // После законченного прохода ждём полной зарядки, паузы и того, чтобы
+        // растворился след, — и убираем сектор заново.
+        if (robot.meter.isFull() && (!robot.finished || (robot.restLeft <= 0 && !robot.fading))) {
+          if (robot.finished) startNewPass(robot);
+          robot.state = "toWork";
+          robot.approach = true;
+        }
         break;
 
       case "toWork":
         robot.meter.consume(dt, "work");
-        if (driveToward(robot, resumePoint(robot), dt)) robot.state = "working";
+        if (driveVia(robot, resumePoint(robot), dt)) robot.state = "working";
         break;
 
       case "working":
@@ -269,27 +363,26 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
 
         if (mustReturnToStation(robot)) {
           robot.state = "toStation";
+          robot.approach = true;
           break;
         }
 
         advanceSweep(robot, dt);
         newly = markCoverage(robot);
-        if (robot.finished) robot.state = "toStation";
+        if (robot.finished) {
+          robot.state = "toStation";
+          robot.approach = true;
+        }
         break;
 
       case "toStation":
         robot.meter.consume(dt, "work");
 
-        if (driveToward(robot, robot.station, dt)) {
+        if (driveVia(robot, robot.station, dt)) {
           placeAt(robot, robot.station.x, robot.station.z, STATION_HEADING);
-          robot.state = robot.finished ? "parked" : "charging";
+          robot.state = "charging";
+          robot.restLeft = PASS_REST_SECONDS;
         }
-        break;
-
-      case "parked":
-        // Работа закончена: стоим на станции, дозаряжаемся и потребляем в простое.
-        robot.meter.consume(dt, "idle");
-        robot.meter.charge(dt);
         break;
 
       default:
@@ -302,8 +395,7 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
   }
 
   function chargerLedOf(robot) {
-    const atStation = robot.state === "charging" || robot.state === "parked";
-    if (!atStation) return "off";
+    if (robot.state !== "charging") return "off";
 
     return robot.meter.isFull() ? "full" : "charging";
   }
@@ -313,7 +405,7 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
   // ----------------------------------------------------------
 
   // Для проверки расчётной производительности: сколько клеток убрано и сколько
-  // секунд шла уборка (время, пока хотя бы один робот ещё не закончил).
+  // секунд шла уборка (время, пока хотя бы один робот ещё не закончил проход).
   let cleanedCells = 0;
   let activeSeconds = 0;
 
@@ -348,6 +440,7 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
 
     return {
       finished: robots.filter((r) => r.finished).length,
+      passes: robots.reduce((sum, r) => sum + r.passes, 0),
       charging: robots.filter((r) => r.state === "charging").length,
       minSoc: socs.length > 0 ? Math.min(...socs) : null,
       cleanedCells,
@@ -355,5 +448,12 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
     };
   }
 
-  return { step, updateFades, getStats, meters: robots.map((r) => r.meter), stations };
+  function dispose() {
+    for (const robot of robots) {
+      group.remove(robot.model, robot.charger.group);
+      robot.charger.dispose();
+    }
+  }
+
+  return { step, updateFades, getStats, dispose, meters: robots.map((r) => r.meter), stations };
 }

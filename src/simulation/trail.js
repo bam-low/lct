@@ -5,8 +5,14 @@ import { toPx, rectToPx } from "./canvasCoords.js";
 // спавне робота и переиспользуется как область клипа при рисовании (чтобы
 // скруглённые концы полосы на разворотах не вылезали за границу участка) и как
 // область стирания при угасании следа по завершении уборки.
+//
+// Границы округлены до целых пикселей: с дробными краем клипа и стирания
+// оставался бы неполностью стёртый столбец пикселей — тонкая полоска следа между
+// соседними участками. Соседние участки делят одну и ту же целую границу.
 export function sectorToPixelRect(sector) {
-  return rectToPx(sector.xMin, sector.xMax, sector.zMin, sector.zMax);
+  const rect = rectToPx(sector.xMin, sector.xMax, sector.zMin, sector.zMax);
+
+  return { x0: Math.round(rect.x0), x1: Math.round(rect.x1), z0: Math.round(rect.z0), z1: Math.round(rect.z1) };
 }
 
 function clipToRect(ctx, rectPx) {

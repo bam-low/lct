@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { FLOOR, MARGIN, WALL_HEIGHT } from "./layout.js";
 import { CANVAS_PX, PALETTE, TRAIL_OPACITY } from "./constants.js";
-import { applyColorSpace } from "./sceneUtils.js";
+import { applyColorSpace, disposeTree } from "./sceneUtils.js";
 import { createWalls } from "./walls.js";
 
 // Расстояние между этажами по высоте: стены + перекрытие (оно как раз ложится
@@ -144,9 +144,13 @@ export function createFloorLevel(shared, chunkLabels, index) {
     armFleet: null,
     loaderSystem: null,
 
+    // Общие геометрии, материал пола и подписи чанков принадлежат сцене; здесь —
+    // только своё: слой следа, ящики и стены.
     dispose() {
       trail.texture.dispose();
       trailPlane.material.dispose();
+      disposeTree(crates);
+      disposeTree(walls.group);
     },
   };
 }

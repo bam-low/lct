@@ -9,6 +9,10 @@ export const STATION_Z = 46.8; // центр припаркованного пы
 const STATION_PITCH = 5.2;
 const CHARGER_Z = 49.35;
 
+// Станции стоят в ряд вплотную друг к другу, поэтому заезжать на станцию и выезжать
+// с неё можно только по прямой с севера: с точки подъезда, лежащей на этой линии.
+export const STATION_APPROACH_DISTANCE = 8;
+
 export const STATION_PAD_WIDTH = 4;
 export const STATION_PAD_DEPTH = 5.6;
 
@@ -56,6 +60,11 @@ export function createCharger(x) {
       if (kind === current) return;
       current = kind;
       ledMaterial.color.setHex(LED_COLORS[kind]);
+    },
+
+    // Корпус и светодиод общие по геометрии, свой только материал индикатора.
+    dispose() {
+      ledMaterial.dispose();
     },
   };
 }

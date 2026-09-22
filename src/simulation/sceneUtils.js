@@ -50,6 +50,22 @@ export function buildRowCenters(sector) {
   return centers;
 }
 
+// Освобождает видеопамять, которую занимают геометрии и материалы объекта и всех
+// его потомков. Текстуры не трогает (они общие), поэтому вызывать можно только для
+// того, чем объект владеет сам: общие геометрии и материалы (шаблоны glb, ящики,
+// корпус зарядки) освобождать нельзя.
+export function disposeTree(root) {
+  root.traverse((object) => {
+    if (!object.isMesh) return;
+
+    object.geometry.dispose();
+
+    for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+      material.dispose();
+    }
+  });
+}
+
 export function easeInOut(t) {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }

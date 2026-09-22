@@ -13,6 +13,16 @@ import { VACUUM_HALF_WIDTH } from "../constants.js";
 export const BODY_HALF_LENGTH = 2.1;
 export const TRANSIT_RADIUS = 2.2;
 
+// Радиусы выталкивания поменьше — иначе робот не смог бы доехать до цели, которая
+// стоит вплотную к препятствию:
+//   у роборук — их габарит уже с запасом, а точка, где пылесос убирает рядом с
+//                 рукой, отстоит от него ровно на полуширину корпуса;
+//   у уборщиков — на подъезде к цели (TIGHT_DISTANCE): соседние ряды на границе
+//                 участков стоят вплотную, корпус к корпусу.
+const ARM_PUSH_RADIUS = VACUUM_HALF_WIDTH - 0.3;
+const TIGHT_PUSH_RADIUS = VACUUM_HALF_WIDTH - 0.2;
+export const TIGHT_DISTANCE = 5;
+
 const CLEARANCE = 0.2;
 const LOOKAHEAD = 9;
 const STEER_GAIN = 1.7;
@@ -116,9 +126,11 @@ function pushOutOfCircle(pos, other) {
 }
 
 // Разводит едущий робот (pos — его точка, меняется на месте) с остальными:
-// boxes — неподвижные корпуса и роборуки, circles — другие едущие роботы
-// (их точки тоже сдвигаются, поэтому передаём сами объекты позиций).
-export function pushOut(pos, boxes, circles) {
-  for (const box of boxes) pushOutOfBox(pos, TRANSIT_RADIUS, box);
+// arms — роборуки, boxes — неподвижные корпуса пылесосов, circles — другие едущие
+// роботы (их точки тоже сдвигаются, поэтому передаём сами объекты позиций).
+// tight — робот на подъезде к цели.
+export function pushOut(pos, { arms, boxes, circles, tight }) {
+  for (const box of arms) pushOutOfBox(pos, ARM_PUSH_RADIUS, box);
+  for (const box of boxes) pushOutOfBox(pos, tight ? TIGHT_PUSH_RADIUS : TRANSIT_RADIUS, box);
   for (const circle of circles) pushOutOfCircle(pos, circle);
 }

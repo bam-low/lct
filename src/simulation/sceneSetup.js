@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { FLOOR } from "./layout.js";
 import { PALETTE, ISO_ELEV, SCENE_HEIGHT_PX } from "./constants.js";
-import { applyColorSpace } from "./sceneUtils.js";
+import { applyColorSpace, disposeTree } from "./sceneUtils.js";
 import { createChunkLabelLayer } from "./chunkLabels.js";
 import { createFloorLevel, createSharedLevelAssets, FLOOR_PITCH } from "./floorLevel.js";
 
@@ -162,6 +162,13 @@ export function createWarehouseScene(mount) {
     renderer.dispose();
     chunkLabels.dispose();
     ghostMaterial.dispose();
+    beltTexture.dispose();
+    disposeTree(staticGroup);
+
+    shared.floorTexture.dispose();
+    shared.floorMaterial.dispose();
+    shared.slabGeometry.dispose();
+    shared.trailGeometry.dispose();
 
     if (renderer.domElement.parentNode === mount) {
       mount.removeChild(renderer.domElement);

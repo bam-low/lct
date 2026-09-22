@@ -11,7 +11,7 @@ import {
   ARM_PICKUP_Y,
   ARM_CARRY_Y,
 } from "../constants.js";
-import { easeInOut } from "../sceneUtils.js";
+import { easeInOut, disposeTree } from "../sceneUtils.js";
 import { computeArmObstacles } from "../obstacles.js";
 import { makeArmRobot } from "../robots/armRobot.js";
 import { createEnergyMeter } from "../energy.js";
@@ -184,5 +184,13 @@ export function createArmFleet({ group, zone, count, beltTexture, armProd, energ
     });
   }
 
-  return { step, obstacles, meters, getOpsDone: () => opsDone };
+  // У каждой роборуки свои геометрии и материалы (текстура ленты общая).
+  function dispose() {
+    for (const arm of arms) {
+      group.remove(arm.group);
+      disposeTree(arm.group);
+    }
+  }
+
+  return { step, obstacles, meters, dispose, getOpsDone: () => opsDone };
 }

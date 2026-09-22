@@ -101,5 +101,11 @@ export function makeTruck() {
     get doors() {
       return openness;
     },
+
+    // Свои у фуры только чёрный проём кузова; модель (геометрии, материалы) общая.
+    dispose() {
+      opening.geometry.dispose();
+      opening.material.dispose();
+    },
   };
 }
