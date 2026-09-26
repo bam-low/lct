@@ -71,7 +71,12 @@ export const LOAD_SLOWDOWN = 0.5;
 
 // Насыщенная пастельная палитра
 export const PALETTE = {
-  floor: "#4C5070",
+  // floor/wall — из реальных материалов 3D-модели «Стены и пол» (walls_floor.glb),
+  // цвета сконвертированы из линейного baseColorFactor в sRGB-hex.
+  floor: "#464549",
+  exterior: "#2B2A33", // снаружи нарисованного контура формы склада (конструктор)
+  rack: "#C85E70", // клетки-стеллажи, нарисованные в конструкторе формы склада
+  invalidGate: "#9C3B3B", // клетка ворот в конструкторе, не касающаяся края формы — не станет настоящими воротами
   pad: "#8B78C7",
   storage: "#37394F",
   crateA: "#E5A13F",
@@ -81,7 +86,7 @@ export const PALETTE = {
   armAccents: ["#8B78C7", "#C85E70", "#4F9B90", "#E5A13F", "#8B78C7", "#C85E70"],
   belt: "#292B3D",
   beltStripe: "#D4B96F",
-  wall: "#9C94C0",
+  wall: "#86909E",
   wallTrim: "#E5A13F",
   dockPad: "#E5A13F",
   cargoPallet: "#9A7B55",
