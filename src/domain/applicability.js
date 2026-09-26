@@ -37,3 +37,15 @@ export function checkBudget(scenarioCapex, budgetCapexMRub) {
 
   return { budgetRub, withinBudget: overBy <= 0, overBy: Math.max(0, overBy) };
 }
+
+// Общая проверка «требуется X, доступно Y» — для любого инфраструктурного
+// ограничения объекта (мощность электроснабжения, длина конвейера и т.п.).
+// Тоже информационное предупреждение, не исключение (та же логика, что и
+// checkBudget — бюджет и инфраструктурные лимиты одного рода ограничений).
+export function checkCapacity(requiredValue, availableValue, unit = "") {
+  if (availableValue === undefined || availableValue === null || requiredValue <= 0) return null;
+
+  const overBy = requiredValue - availableValue;
+
+  return { requiredValue, availableValue, unit, sufficient: overBy <= 0, overBy: Math.max(0, overBy) };
+}

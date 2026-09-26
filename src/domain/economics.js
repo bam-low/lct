@@ -1,19 +1,26 @@
 // Формулы по табл. 3.5.2 ТЗ «Платформа подбора роботизированных решений».
 // Модуль без React/Three.js — переиспользуется любым адаптером объекта.
 
+// reserveFactor — мультипликативный запас на пики/поломки/обслуживание сверх
+// базового расчёта (напр. 1.1 = +10% роботов), а не количество штук: ТЗ 3.5.2
+// перечисляет загрузку, доступность и резерв как однородные коэффициенты
+// ("производительность... с учётом коэффициента загрузки, доступности и
+// резерва"), поэтому резерв применяется тем же способом, что и они, — до
+// округления вверх. По умолчанию 1 (без резерва) — не меняет поведение мест,
+// которые его не передают.
 export function requiredRobotCount({
   peakDemand,
   throughputPerRobot,
   loadFactor = 0.85,
   availability = 0.95,
-  reserve = 0,
+  reserveFactor = 1,
 }) {
   if (!throughputPerRobot || throughputPerRobot <= 0) return 0;
 
   const effective = throughputPerRobot * loadFactor * availability;
   if (effective <= 0) return 0;
 
-  return Math.max(0, Math.ceil(peakDemand / effective) + reserve);
+  return Math.max(0, Math.ceil((peakDemand / effective) * reserveFactor));
 }
 
 export function capexTotal({
@@ -77,14 +84,24 @@ export function roi(effect, capex, years) {
   return ((effect * years) / capex) * 100;
 }
 
-// TCO = CAPEX + операционные затраты за горизонт, с заменой оборудования
-// по истечении срока службы (каждые lifespanYears снова добавляется capex).
+// TCO = CAPEX + операционные затраты за горизонт, с заменой оборудования по
+// истечении срока службы (каждые lifespanYears снова добавляется capex) минус
+// остаточная стоимость последнего поколения оборудования на конец горизонта
+// (оно ещё не самортизировано полностью — учитываем как актив, а не как
+// списанную в ноль затрату; линейная амортизация, допущение 2.2 приложения к ТЗ).
 export function tco({ capex, opexPerYear, horizonYears, lifespanYears }) {
   let total = capex + opexPerYear * horizonYears;
+  let replacements = 0;
 
   if (lifespanYears > 0 && lifespanYears < horizonYears) {
-    const replacements = Math.floor((horizonYears - 1) / lifespanYears);
+    replacements = Math.floor((horizonYears - 1) / lifespanYears);
     total += replacements * capex;
+  }
+
+  if (lifespanYears > 0) {
+    const yearsSinceLastPurchase = horizonYears - replacements * lifespanYears;
+    const remainingLifeFraction = Math.max(0, 1 - yearsSinceLastPurchase / lifespanYears);
+    total -= capex * remainingLifeFraction;
   }
 
   return total;

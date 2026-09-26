@@ -21,8 +21,12 @@ import {
   linearDepreciationPerYear,
 } from "./economics.js";
 import { CHARGE_EFFICIENCY } from "../simulation/energy.js";
+import { formatCurrencyRUB } from "./economics.js";
 
-export const RESERVE_RATIO = 0.05;
+// Финансовый резерв на непредвиденные расходы внедрения — процент сверх суммы
+// статей CAPEX (не путать с params.reserveFactor: тот — эксплуатационный запас
+// парка роботов на пики/поломки, применяется отдельно при расчёте их количества).
+export const CAPEX_RESERVE_RATIO = 0.05;
 
 export const hoursPerShift = (params) => params.shiftHoursPerDay || 8;
 export const operatingHoursPerDay = (params) => hoursPerShift(params) * (params.shiftsPerDay || 1);
@@ -40,6 +44,7 @@ export function computeGroupCounts(params, processes) {
             peakDemand: process.peakDemand,
             throughputPerRobot: process.throughputPerRobot,
             loadFactor: params.loadFactor,
+            reserveFactor: params.reserveFactor,
           })
         : 0,
       throughputPerRobot: process.throughputPerRobot,
@@ -48,6 +53,13 @@ export function computeGroupCounts(params, processes) {
   }
 
   return result;
+}
+
+// Суммарная пиковая электрическая мощность парка, кВт — общая для любого типа
+// объекта (нужна только структура групп и technical.energy.workPowerKw из
+// каталога), поэтому живёт в ядре, а не дублируется в каждом адаптере.
+export function fleetPeakPowerKw(groups) {
+  return groups.reduce((sum, g) => sum + (g.solution?.technical?.energy?.workPowerKw ?? 0) * (g.count ?? 0), 0);
 }
 
 // Электроэнергия за год, ₽: работа и простой в смену с учётом коэффициента
@@ -67,7 +79,18 @@ function energyCostPerYear(solution, count, params) {
 
 function groupEconomics(solution, count, kind, params) {
   if (!solution || count <= 0) {
-    return { equipment: 0, software: 0, integration: 0, service: 0, repair: 0, energy: 0, lifespanYears: 0 };
+    return {
+      equipment: 0,
+      infrastructure: 0,
+      software: 0,
+      integration: 0,
+      commissioning: 0,
+      training: 0,
+      service: 0,
+      repair: 0,
+      energy: 0,
+      lifespanYears: 0,
+    };
   }
 
   const e = solution.economics;
@@ -76,8 +99,11 @@ function groupEconomics(solution, count, kind, params) {
   if (kind === "raas") {
     return {
       equipment: 0,
+      infrastructure: 0,
       software: 0,
       integration: 0,
+      commissioning: 0,
+      training: 0,
       service: count * (e.raas?.monthlyRate ?? 0) * 12,
       repair: 0,
       energy,
@@ -87,20 +113,16 @@ function groupEconomics(solution, count, kind, params) {
 
   return {
     equipment: count * e.equipmentCost,
+    infrastructure: count * (e.infrastructureCost ?? 0),
     software: count * e.softwareCost,
     integration: count * e.implementationCost,
+    commissioning: count * (e.commissioningCost ?? 0),
+    training: count * (e.trainingCost ?? 0),
     service: count * e.serviceCostPerYear,
     repair: count * e.maintenanceCostPerYear,
     energy,
     lifespanYears: e.lifespanYears,
   };
-}
-
-// Годовой ФОТ текущего ручного процесса: часы считаем как operatingHoursPerDay
-// (смена × число смен в сутки) — иначе при нескольких сменах эта функция занижала
-// бы затраты на персонал, а вместе с ними и «экономию труда» от роботизации.
-export function baselineOpexOf(params) {
-  return (params.staffCount ?? 0) * (params.hourlyWage ?? 0) * operatingHoursPerDay(params) * (params.daysPerYear ?? 0);
 }
 
 function weightedLifespan(groups) {
@@ -109,14 +131,41 @@ function weightedLifespan(groups) {
   return spans.reduce((a, b) => a + b, 0) / spans.length;
 }
 
+// Модель RaaS выбрана как фиксированная ежемесячная плата за робота, без
+// CAPEX (ТЗ Дополнения 2.4 оставляет структуру платежа и условия контракта на
+// усмотрение команды) — здесь эта договорённость становится явной и видимой
+// пользователю (ТЗ 3.5.8), а не просто цифрой в OPEX. Условия (срок контракта,
+// опция выкупа) лежат в каталоге у каждого решения (economics.raas), но раньше
+// нигде не показывались.
+function raasModelAssumptionOf(groups) {
+  const active = groups.filter((g) => g.solution && g.count > 0);
+  if (active.length === 0) return null;
+
+  const terms = active.map((g) => {
+    const raas = g.solution.economics.raas;
+    if (!raas) return `${g.solution.identification.name} — условия RaaS не заданы в каталоге`;
+
+    const buyout = raas.buyoutOption ? "выкуп по истечении контракта возможен" : "выкуп не предусмотрен";
+    return `${g.solution.identification.name} — ${formatCurrencyRUB(raas.monthlyRate)}/мес за робота, контракт ${raas.contractMonths} мес., ${buyout}`;
+  });
+
+  return `Модель RaaS: фиксированная ежемесячная плата за робота, CAPEX≈0 — вся стоимость в OPEX. ${terms.join("; ")}.`;
+}
+
 // Строит один сценарий: 'baseline' | 'purchase' | 'raas'.
 // groups — [{ solution, count }], произвольное число групп роботов (у склада —
 // 3: пылесосы/роборуки/погрузчики; у другого объекта может быть иначе).
+// baselineOpex — годовой ФОТ текущего ручного процесса, ₽; laborSavings —
+// сколько из него реально экономит парк, ₽ (не доля — абсолютная сумма). Оба
+// считает адаптер объекта: только он знает модель персонала (роли, начисления,
+// потери рабочего времени) и как сопоставить пропускную способность купленных
+// роботов с производительностью персонала для своих процессов — здесь это уже
+// готовые числа, а не формулы (ТЗ 4.2.6: ядро не должно знать про склад/
+// аэропорт/медучреждение и про то, как у них устроен персонал).
 // extraAssumptions — допущения адаптера объекта, которые нужно показать
-// пользователю вместе с формулами (ТЗ 3.5.1, 3.5.8).
-export function buildScenario(kind, { params, groups, extraAssumptions = {} }) {
-  const baselineOpex = baselineOpexOf(params);
-
+// пользователю вместе с формулами (ТЗ 3.5.1, 3.5.8); может переопределить
+// laborSavingsAssumption по умолчанию своим текстом.
+export function buildScenario(kind, { params, groups, baselineOpex = 0, laborSavings = 0, extraAssumptions = {} }) {
   if (kind === "baseline") {
     return {
       kind,
@@ -140,11 +189,14 @@ export function buildScenario(kind, { params, groups, extraAssumptions = {} }) {
 
   const rawCapex = capexTotal({
     equipment: sumOf("equipment"),
+    infrastructure: sumOf("infrastructure"),
     software: sumOf("software"),
     integration: sumOf("integration"),
+    commissioning: sumOf("commissioning"),
+    training: sumOf("training"),
   });
 
-  const capex = rawCapex + rawCapex * RESERVE_RATIO;
+  const capex = rawCapex + rawCapex * CAPEX_RESERVE_RATIO;
 
   const opexPerYear = opexTotal({
     service: sumOf("service"),
@@ -153,7 +205,7 @@ export function buildScenario(kind, { params, groups, extraAssumptions = {} }) {
   });
 
   const effect = annualEffect({
-    laborSavings: baselineOpex,
+    laborSavings,
     additionalOpex: opexPerYear,
   });
 
@@ -170,10 +222,17 @@ export function buildScenario(kind, { params, groups, extraAssumptions = {} }) {
     tcoValue: tco({ capex, opexPerYear, horizonYears, lifespanYears }),
     depreciationPerYear: linearDepreciationPerYear(capex, lifespanYears),
     assumptions: {
+      // Дефолт на случай, если адаптер объекта не передал своё описание модели
+      // персонала через extraAssumptions (у склада — всегда передаёт, см.
+      // warehouseAdapter.js laborSavingsAssumptionOf).
       laborSavingsAssumption:
-        "Допущение: роботизация полностью заменяет ручной труд на данном процессе — экономия труда = текущий ФОТ процесса.",
-      reserveRatio: RESERVE_RATIO,
+        baselineOpex > 0
+          ? `Допущение: экономия труда — ${Math.round(Math.min(100, (laborSavings / baselineOpex) * 100))}% текущего ФОТ процесса.`
+          : "Базовый ФОТ процесса не задан — экономия труда не считается.",
+      capexReserveRatio: CAPEX_RESERVE_RATIO,
+      fleetReserveFactor: params.reserveFactor ?? 1,
       lifespanYears,
+      raasModelAssumption: kind === "raas" ? raasModelAssumptionOf(groups) : null,
       ...extraAssumptions,
     },
   };
@@ -189,8 +248,11 @@ export function scaleSolutionCosts(solution, factor) {
     economics: {
       ...e,
       equipmentCost: e.equipmentCost * factor,
+      infrastructureCost: (e.infrastructureCost ?? 0) * factor,
       softwareCost: e.softwareCost * factor,
       implementationCost: e.implementationCost * factor,
+      commissioningCost: (e.commissioningCost ?? 0) * factor,
+      trainingCost: (e.trainingCost ?? 0) * factor,
       maintenanceCostPerYear: e.maintenanceCostPerYear * factor,
       serviceCostPerYear: e.serviceCostPerYear * factor,
       raas: e.raas ? { ...e.raas, monthlyRate: e.raas.monthlyRate * factor } : e.raas,

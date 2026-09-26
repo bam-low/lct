@@ -1,16 +1,19 @@
 import { formatCurrencyRUB } from "../../domain/economics.js";
 
 const FORMULAS = [
-  ["Количество роботов", "пиковая потребность / (производительность × загрузка × доступность)"],
-  ["CAPEX", "оборудование + ПО + внедрение + резерв (5%)"],
-  ["OPEX", "сервис/аренда + ремонт и обслуживание"],
+  ["Количество роботов", "(пиковая потребность / (производительность × загрузка × доступность)) × коэффициент резерва"],
+  ["CAPEX", "оборудование + инфраструктура + ПО + интеграция + пусконаладка + обучение + резерв (5%)"],
+  ["OPEX", "сервис/аренда + ремонт и обслуживание + электроэнергия"],
   ["Годовой эффект", "экономия труда + прочая экономия − доп. OPEX"],
   ["Срок окупаемости", "CAPEX / годовой эффект"],
   ["ROI", "накопленный эффект за горизонт / CAPEX × 100%"],
-  ["TCO", "CAPEX + Σ OPEX за горизонт (с заменой оборудования по сроку службы)"],
+  ["TCO", "CAPEX + Σ OPEX за горизонт (с заменой оборудования по сроку службы) − остаточная стоимость на конец горизонта"],
 ];
 
-export default function EconomicsDetail({ scenario, counts, floors = 1 }) {
+// composition — [[label, count], ...] произвольный состав парка объекта (у
+// склада — пылесосы/роборуки/погрузчики, у аэропорта — багаж/рамп/уборка);
+// компонент не завязан на конкретный тип объекта (ТЗ 4.2.6).
+export default function EconomicsDetail({ scenario, composition = [], floors = 1 }) {
   return (
     <details className="bg-white/40 rounded-xl p-4 text-sm text-[#3F4159]">
       <summary className="font-bold cursor-pointer">Методология расчётов и допущения</summary>
@@ -27,21 +30,19 @@ export default function EconomicsDetail({ scenario, counts, floors = 1 }) {
           </ul>
         </div>
 
-        <div>
-          <div className="font-semibold mb-1">
-            Состав парка в этом сценарии{floors > 1 ? ` (всё здание, ${floors} эт.)` : ""}
+        {composition.length > 0 && (
+          <div>
+            <div className="font-semibold mb-1">
+              Состав парка в этом сценарии{floors > 1 ? ` (всё здание, ${floors} эт.)` : ""}
+            </div>
+            <div className="text-[#6b5f7a]">
+              {composition
+                .filter(([, count]) => count > 0)
+                .map(([label, count]) => `${label}: ${count} шт`)
+                .join(" · ")}
+            </div>
           </div>
-          <div className="text-[#6b5f7a]">
-            {[
-              ["Пылесосы", counts.vacuumCount],
-              ["Роборуки", counts.armCount],
-              ["Погрузчики", counts.loaderCount],
-            ]
-              .filter(([, count]) => count > 0)
-              .map(([label, count]) => `${label}: ${count} шт`)
-              .join(" · ")}
-          </div>
-        </div>
+        )}
 
         {scenario.depreciationPerYear > 0 && (
           <div>
@@ -58,7 +59,22 @@ export default function EconomicsDetail({ scenario, counts, floors = 1 }) {
           <div className="font-semibold mb-1">Допущения</div>
           <div className="text-[#6b5f7a] space-y-1">
             <p>{scenario.assumptions.laborSavingsAssumption}</p>
+            {scenario.assumptions.payrollAssumption && <p>{scenario.assumptions.payrollAssumption}</p>}
+            {scenario.assumptions.pickComplexityAssumption && <p>{scenario.assumptions.pickComplexityAssumption}</p>}
             {scenario.assumptions.staffModelAssumption && <p>{scenario.assumptions.staffModelAssumption}</p>}
+            {scenario.assumptions.raasModelAssumption && <p>{scenario.assumptions.raasModelAssumption}</p>}
+            {scenario.assumptions.capexReserveRatio !== undefined && (
+              <p>
+                Финансовый резерв CAPEX: {Math.round(scenario.assumptions.capexReserveRatio * 100)}% сверх суммы
+                статей (на непредвиденные расходы внедрения).
+              </p>
+            )}
+            {scenario.assumptions.fleetReserveFactor > 1 && (
+              <p>
+                Эксплуатационный резерв парка: ×{scenario.assumptions.fleetReserveFactor.toFixed(2)} к расчётному
+                числу роботов (на пики нагрузки, поломки и обслуживание, ТЗ 3.5.2) — уже учтён в составе парка выше.
+              </p>
+            )}
           </div>
         </div>
       </div>

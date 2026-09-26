@@ -64,6 +64,10 @@ const angleDiff = (from, to) => Math.atan2(Math.sin(to - from), Math.cos(to - fr
 // тем медленнее едет погрузчик (LOAD_SLOWDOWN).
 // ============================================================
 
+// robotFactory() — какую модель возить; по умолчанию вилочный погрузчик, но
+// вся логика (маршруты, хранение, ворота, фуры) работает с любой моделью,
+// возвращающей {group, carry, setForkLift, setCargoDepth} — см.
+// transporterRobot.js для альтернативы без вил (грузовая платформа).
 export function createLoaderSystem({
   group,
   count,
@@ -78,6 +82,7 @@ export function createLoaderSystem({
   routeLengthM,
   startDelay = 0,
   energyProfile,
+  robotFactory = makeForkliftRobot,
 }) {
   const { docks } = createStorage({ slotsPerLane });
   const cargoFactory = createCargoFactory(cargo);
@@ -133,7 +138,7 @@ export function createLoaderSystem({
   function createLoader(index) {
     const myGates = gatesOfLoader(index, Math.min(count, gates.length));
     const bayX = bayXOf(myGates[0].index);
-    const robot = makeForkliftRobot();
+    const robot = robotFactory();
     robot.setCargoDepth(cargoFactory.depth);
 
     robot.group.position.set(bayX, 0.02, BAY_Z);

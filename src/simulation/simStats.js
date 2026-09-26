@@ -70,7 +70,12 @@ export function readStats(levels, floorIndex, zoneCells, simSeconds) {
 }
 
 export const ROBOT_TITLES = { vacuum: "пылесосы", arm: "роборуки", loader: "погрузчики" };
-export const PHASE_LABELS = { loading: "Приёмка груза", unloading: "Отгрузка груза", mixed: "Приёмка / отгрузка" };
+export const PHASE_LABELS = {
+  loading: "Приёмка груза",
+  unloading: "Отгрузка груза",
+  mixed: "Приёмка / отгрузка",
+  storage: "Роботизированное хранение",
+};
 
 export const formatHours = (hours) => `${hours.toLocaleString("ru-RU")} ч`;
 

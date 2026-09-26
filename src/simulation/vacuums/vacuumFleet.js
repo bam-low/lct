@@ -63,9 +63,13 @@ function sortByDistanceFromCorner(sectors) {
 // После зарядки он едет обратно в ту точку сектора, где остановился.
 // ============================================================
 
-export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyProfile, obstacles, trail, grid }) {
+// robotFactory() — какую модель строить на каждом месте; по умолчанию
+// процедурная CleanBot-модель (glb), но весь автомат состояний (маршрут,
+// заряд, змейка уборки, след) не завязан на конкретную геометрию — подходит
+// любая модель на колёсах, см. floorWasherRobot.js для мойщика полов.
+export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyProfile, obstacles, trail, grid, robotFactory = makeVacuumRobot }) {
   const transitSpeed = cleaningSpeed * VACUUM_TRANSIT_FACTOR;
-  const stations = chargingStationPositions(count);
+  const stations = chargingStationPositions(count, zone.xMin);
   const sectors = sortByDistanceFromCorner(computeSectors(count, zone));
 
   const robots = sectors.map((sector, index) => createRobot(sector, stations[index]));
@@ -76,7 +80,7 @@ export function createVacuumFleet({ group, zone, count, cleaningSpeed, energyPro
 
   function createRobot(sector, station) {
     const rowCenters = buildRowCenters(sector);
-    const model = makeVacuumRobot();
+    const model = robotFactory();
     const charger = createCharger(station.x);
 
     model.scale.setScalar(VACUUM_MODEL_SCALE);

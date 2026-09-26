@@ -1,26 +1,25 @@
 import { useMemo, useState } from "react";
 import Slider from "../ui/Slider.jsx";
-import { buildSensitivityScenario } from "../../domain/warehouseAdapter.js";
 import { formatCurrencyRUB } from "../../domain/economics.js";
 
-export default function SensitivityPanel({ params, vacuumZoneAreaM2, vacuumSolution, armSolution, loaderSolution }) {
+// buildSensitivity(factors) — специфика объекта (какие параметры сдвигать под
+// капотом при изменении «стоимости труда»/«объёма операций») остаётся снаружи,
+// у вызывающего экрана (WarehouseApp/AirportApp) — сама панель не знает, склад
+// перед ней или аэропорт (ТЗ 4.2.6).
+export default function SensitivityPanel({ buildSensitivity }) {
   const [equipmentDelta, setEquipmentDelta] = useState(0);
   const [laborDelta, setLaborDelta] = useState(0);
   const [demandDelta, setDemandDelta] = useState(0);
 
   const result = useMemo(
     () =>
-      buildSensitivityScenario({
-        params,
-        vacuumZoneAreaM2,
-        vacuumSolution,
-        armSolution,
-        loaderSolution,
+      buildSensitivity({
         equipmentFactor: 1 + equipmentDelta / 100,
         laborFactor: 1 + laborDelta / 100,
         demandFactor: 1 + demandDelta / 100,
       }),
-    [params, vacuumZoneAreaM2, vacuumSolution, armSolution, loaderSolution, equipmentDelta, laborDelta, demandDelta]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [buildSensitivity, equipmentDelta, laborDelta, demandDelta]
   );
 
   return (

@@ -4,27 +4,30 @@
 
 const STORAGE_KEY = "warehouse-sim/project/v1";
 
-export function loadProject() {
+// key — отдельный проект на тип объекта (ТЗ 3.1.3: сравнение сценариев ведётся
+// внутри проекта, а не между объектами разных типов); склад держит исходный
+// ключ ради обратной совместимости с уже сохранёнными проектами.
+export function loadProject(key = STORAGE_KEY) {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 }
 
-export function saveProject(project) {
+export function saveProject(project, key = STORAGE_KEY) {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
+    window.localStorage.setItem(key, JSON.stringify(project));
   } catch {
     // localStorage недоступен (приватный режим, квота) — молча пропускаем,
     // проект просто не переживёт перезагрузку страницы.
   }
 }
 
-export function clearProject() {
+export function clearProject(key = STORAGE_KEY) {
   try {
-    window.localStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem(key);
   } catch {
     // см. saveProject
   }

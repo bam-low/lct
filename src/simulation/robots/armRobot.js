@@ -1,7 +1,12 @@
 import * as THREE from "three";
 import { PALETTE, ARM_BELT_X, ARM_BELT_HALF_WIDTH, ARM_BELT_HALF_LENGTH, ARM_LENGTH, ARM_CARRY_Y, ARM_BELT_START_Z, BOX_GAP } from "../constants.js";
 
-export function makeArmRobot(accentColor, beltTexture) {
+// makeClaw(accentColor, darkMat) — опционально: своя «кисть» руки вместо
+// стандартного кубика-захвата (используется для альтернативной модели —
+// манипулятора-сварщика с настоящей geometry вместо процедурного бокса).
+// Возвращённый Object3D должен быть готов принимать коробки как своих детей
+// (см. armFleet.js — коробка становится ребёнком claw на время переноса).
+export function makeArmRobot(accentColor, beltTexture, makeClaw) {
   const group = new THREE.Group();
 
   const baseMat = new THREE.MeshStandardMaterial({ color: PALETTE.robotBody, flatShading: true, roughness: 0.56, metalness: 0.0 });
@@ -31,10 +36,12 @@ export function makeArmRobot(accentColor, beltTexture) {
   arm.receiveShadow = true;
   pivot.add(arm);
 
-  const claw = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), darkMat);
+  const claw = makeClaw ? makeClaw(accentColor, darkMat) : new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), darkMat);
   claw.position.set(ARM_LENGTH, ARM_CARRY_Y, 0);
-  claw.castShadow = true;
-  claw.receiveShadow = true;
+  if (claw.isMesh) {
+    claw.castShadow = true;
+    claw.receiveShadow = true;
+  }
   pivot.add(claw);
 
   const tipMat = new THREE.MeshStandardMaterial({
@@ -55,7 +62,7 @@ export function makeArmRobot(accentColor, beltTexture) {
   return { group, pivot, claw, boxes };
 }
 
-function buildConveyors(group, beltMat) {
+export function buildConveyors(group, beltMat) {
   const beltWidth = ARM_BELT_HALF_WIDTH * 2;
   const beltLength = ARM_BELT_HALF_LENGTH * 2;
 
