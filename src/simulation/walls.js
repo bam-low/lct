@@ -1,23 +1,12 @@
 import * as THREE from "three";
-import { FLOOR, WALL_HEIGHT, WALL_THICKNESS, GATE_XS, GATE_WIDTH, GATE_HEIGHT } from "./layout.js";
+import { WALL_HEIGHT, WALL_THICKNESS, GATE_HEIGHT } from "./layout.js";
 import { PALETTE } from "./constants.js";
+import { computeWallSegments } from "./shape/shapeGeometry.js";
 
 // Прозрачность стен, обращённых к камере: почти невидимы, но контур читается.
 const NEAR_WALL_OPACITY = 0.06;
-
 const TRIM_THICKNESS = 0.5;
-
-const HALF = FLOOR / 2;
-const OUTER = HALF + WALL_THICKNESS; // внешняя грань стены
-
-// Нормаль — куда «смотрит» стена изнутри наружу (x, z). Стена считается
-// обращённой к камере, если камера с той же стороны от склада.
-const SIDES = {
-  north: { normal: [0, -1] },
-  south: { normal: [0, 1] },
-  west: { normal: [-1, 0] },
-  east: { normal: [1, 0] },
-};
+const TRIM_EPS = 0.05; // небольшой вынос окантовки за толщину стены — без z-fighting со сплошными кусками
 
 function smoothstep(edge0, edge1, x) {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
@@ -44,66 +33,85 @@ function addBox(group, material, [x0, x1], [y0, y1], [z0, z1]) {
   group.add(mesh);
 }
 
-// Северная стена — с проёмами для грузовиков: стена между воротами, перемычка
-// над каждым проёмом и жёлтая окантовка проёма.
-function buildNorthWall(group, wallMaterial, trimMaterial) {
-  const z = [-OUTER, -HALF];
-  const gateEdges = GATE_XS.map((x) => [x - GATE_WIDTH / 2, x + GATE_WIDTH / 2]);
+const sortAsc = (a, b) => (a < b ? [a, b] : [b, a]);
 
-  let cursor = -OUTER;
-  for (const [left, right] of gateEdges) {
-    addBox(group, wallMaterial, [cursor, left], [0, WALL_HEIGHT], z);
-    addBox(group, wallMaterial, [left, right], [GATE_HEIGHT, WALL_HEIGHT], z);
-
-    // окантовка: две стойки и верхняя планка проёма
-    addBox(group, trimMaterial, [left, left + TRIM_THICKNESS], [0, GATE_HEIGHT], [-OUTER - 0.05, -HALF + 0.05]);
-    addBox(group, trimMaterial, [right - TRIM_THICKNESS, right], [0, GATE_HEIGHT], [-OUTER - 0.05, -HALF + 0.05]);
-    addBox(group, trimMaterial, [left, right], [GATE_HEIGHT - TRIM_THICKNESS, GATE_HEIGHT], [-OUTER - 0.05, -HALF + 0.05]);
-
-    cursor = right;
-  }
-
-  addBox(group, wallMaterial, [cursor, OUTER], [0, WALL_HEIGHT], z);
+// Сегмент стены (shapeGeometry.js) описывает протяжённость вдоль границы формы
+// (x0..x1 с z0===z1 для north/south, z0..z1 с x0===x1 для west/east) — эта
+// функция достаёт из него общую для north/south/west/east ось «вдоль стены»
+// (tangential) и координату линии границы вместе с компонентой нормали вдоль
+// оси выдавливания толщины стены.
+function axesOf(segment) {
+  const isRow = segment.z0 === segment.z1; // north/south — линия по z, протяжённость по x
+  return {
+    isRow,
+    tMin: isRow ? segment.x0 : segment.z0,
+    tMax: isRow ? segment.x1 : segment.z1,
+    lineCoord: isRow ? segment.z0 : segment.x0,
+    normalComponent: isRow ? segment.normal[1] : segment.normal[0],
+  };
 }
 
-function buildSolidWall(group, material, side) {
-  switch (side) {
-    case "south":
-      addBox(group, material, [-OUTER, OUTER], [0, WALL_HEIGHT], [HALF, OUTER]);
-      break;
-    case "west":
-      addBox(group, material, [-OUTER, -HALF], [0, WALL_HEIGHT], [-HALF, HALF]);
-      break;
-    case "east":
-      addBox(group, material, [HALF, OUTER], [0, WALL_HEIGHT], [-HALF, HALF]);
-      break;
-    default:
-      break;
-  }
+// Собирает [x0,x1]/[z0,z1] для addBox из протяжённости вдоль стены (tRange) и
+// диапазона выдавливания по толщине (extrudeRange), в зависимости от ориентации.
+function boxRanges(axes, tRange, extrudeRange) {
+  return axes.isRow ? { x: tRange, z: extrudeRange } : { x: extrudeRange, z: tRange };
 }
 
-// Четыре стены вокруг склада. У каждой свой материал — так можно независимо
-// менять прозрачность: две стены, ближайшие к камере, растворяются, и
-// внутренность склада видна целиком (при повороте камеры — соответственно).
-export function createWalls() {
+function solidSegment(group, material, segment) {
+  const axes = axesOf(segment);
+  const extrude = sortAsc(axes.lineCoord, axes.lineCoord + axes.normalComponent * WALL_THICKNESS);
+  const { x, z } = boxRanges(axes, [axes.tMin, axes.tMax], extrude);
+  addBox(group, material, x, [0, WALL_HEIGHT], z);
+}
+
+// Ворота: перемычка над проёмом (во всю высоту стены выше GATE_HEIGHT) + рамка
+// (2 стойки + верхняя планка) — тот же приём, что раньше был жёстко зашит
+// только для северной стены (buildNorthWall), теперь для любой стороны.
+function gateSegment(group, wallMaterial, trimMaterial, segment) {
+  const axes = axesOf(segment);
+  const extrude = sortAsc(axes.lineCoord, axes.lineCoord + axes.normalComponent * WALL_THICKNESS);
+  const trimExtrude = sortAsc(
+    axes.lineCoord + axes.normalComponent * (WALL_THICKNESS + TRIM_EPS),
+    axes.lineCoord - axes.normalComponent * TRIM_EPS
+  );
+
+  const lintel = boxRanges(axes, [axes.tMin, axes.tMax], extrude);
+  addBox(group, wallMaterial, lintel.x, [GATE_HEIGHT, WALL_HEIGHT], lintel.z);
+
+  const left = boxRanges(axes, [axes.tMin, axes.tMin + TRIM_THICKNESS], trimExtrude);
+  addBox(group, trimMaterial, left.x, [0, GATE_HEIGHT], left.z);
+
+  const right = boxRanges(axes, [axes.tMax - TRIM_THICKNESS, axes.tMax], trimExtrude);
+  addBox(group, trimMaterial, right.x, [0, GATE_HEIGHT], right.z);
+
+  const header = boxRanges(axes, [axes.tMin, axes.tMax], trimExtrude);
+  addBox(group, trimMaterial, header.x, [GATE_HEIGHT - TRIM_THICKNESS, GATE_HEIGHT], header.z);
+}
+
+// Стены по границе формы склада: сегменты из computeWallSegments(shape) —
+// сплошные куски и проёмы ворот, для любой формы (не только прямоугольной), с
+// тем же приёмом растворения ближних к камере стен, что и раньше. Для пресета
+// по умолчанию (buildDefaultShape) сегменты воспроизводят ровно сегодняшнюю
+// геометрию — 4 стороны, 5 проёмов в северной.
+export function createWalls(shape) {
   const group = new THREE.Group();
   const walls = [];
 
-  for (const [name, { normal }] of Object.entries(SIDES)) {
-    const material = makeMaterial(PALETTE.wall);
-    const materials = [material];
-    const wallGroup = new THREE.Group();
+  for (const segment of computeWallSegments(shape)) {
+    const wallMaterial = makeMaterial(PALETTE.wall);
+    const materials = [wallMaterial];
+    const segmentGroup = new THREE.Group();
 
-    if (name === "north") {
+    if (segment.hasGate) {
       const trimMaterial = makeMaterial(PALETTE.wallTrim);
       materials.push(trimMaterial);
-      buildNorthWall(wallGroup, material, trimMaterial);
+      gateSegment(segmentGroup, wallMaterial, trimMaterial, segment);
     } else {
-      buildSolidWall(wallGroup, material, name);
+      solidSegment(segmentGroup, wallMaterial, segment);
     }
 
-    group.add(wallGroup);
-    walls.push({ normal, materials });
+    group.add(segmentGroup);
+    walls.push({ normal: segment.normal, materials });
   }
 
   // theta — угол камеры вокруг склада (тот же, что в sceneSetup.updateCamera).

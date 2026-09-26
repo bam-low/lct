@@ -4,10 +4,31 @@ import { ISO_ELEV } from "./constants.js";
 import { drawFloorBase } from "./floor.js";
 import { areRobotModelsReady, loadRobotModels } from "./robots/models.js";
 import { createVacuumFleet } from "./vacuums/vacuumFleet.js";
+import { makeVacuumRobot } from "./robots/vacuumRobot.js";
+import { makeFloorWasherRobot } from "./robots/floorWasherRobot.js";
 import { createArmFleet } from "./arms/armFleet.js";
+import { makeArmRobot } from "./robots/armRobot.js";
+import { makeWeldArmRig } from "./robots/weldArmRobot.js";
 import { createLoaderSystem } from "./loaders/loaderSystem.js";
+import { createCustomLoaderFleet } from "./loaders/customLoaderFleet.js";
+import { createStorageCubeFleet } from "./loaders/storageCubeFleet.js";
+import { makeForkliftRobot } from "./robots/forkliftRobot.js";
+import { makeTransporterRobot } from "./robots/transporterRobot.js";
 import { createWarehouseScene } from "./sceneSetup.js";
+import { isDefaultShape } from "./shape/shapeGeometry.js";
 import { EMPTY_STATS, readStats, sameStats } from "./simStats.js";
+
+// Какую модель строить на процесс в зависимости от выбранного в каталоге
+// решения (identification.type) — реальные модели пользователя как
+// альтернативы процедурным (ТЗ 4.2.6-в-миниатюре: сцена не должна знать про
+// конкретные id каталога, только про эти три фабрики на тип).
+const VACUUM_FACTORIES = { washer: makeFloorWasherRobot };
+const ARM_FACTORIES = { weldarm: makeWeldArmRig };
+const LOADER_FACTORIES = { transporter: makeTransporterRobot };
+
+const vacuumFactoryOf = (type) => VACUUM_FACTORIES[type] ?? makeVacuumRobot;
+const armFactoryOf = (type) => ARM_FACTORIES[type] ?? makeArmRobot;
+const loaderFactoryOf = (type) => LOADER_FACTORIES[type] ?? makeForkliftRobot;
 
 // Связка React ↔ Three.js: сборка сцены один раз, пересборка этажей и роботов при
 // смене параметров и покадровый цикл симуляции. Компонент WarehouseScene остаётся
@@ -39,6 +60,7 @@ function disposeFleets(level) {
 // mountRef (куда монтировать canvas), показатели и управление камерой.
 export function useSimulation(cfg) {
   const {
+    shape,
     layout,
     chunkGrid,
     floorsCount,
@@ -50,9 +72,12 @@ export function useSimulation(cfg) {
     resetKey,
     vacuumCount,
     vacuumSpeed,
+    vacuumType,
     armCount,
     armProd,
+    armType,
     loaderCount,
+    loaderType,
     energyProfiles,
     loader,
   } = cfg;
@@ -155,7 +180,7 @@ export function useSimulation(cfg) {
   useEffect(() => {
     if (!st.scene) return;
 
-    st.setLevelCount(floorsCount);
+    st.setLevelCount(floorsCount, shape);
 
     st.levels.forEach((level, index) => {
       disposeFleets(level);
@@ -178,6 +203,7 @@ export function useSimulation(cfg) {
           beltTexture: st.beltTexture,
           armProd,
           energyProfile: energyProfiles.arm,
+          robotFactory: armFactoryOf(armType),
         });
       }
 
@@ -191,44 +217,79 @@ export function useSimulation(cfg) {
           obstacles: level.armFleet?.obstacles ?? [],
           trail: { ctx: level.trailCtx, texture: level.trailTexture },
           grid: level.grid,
+          robotFactory: vacuumFactoryOf(vacuumType),
         });
       }
 
       // Ворота и фуры — только на первом этаже; выше склад пуст.
+      //   storagecube — стационарные башни (без дорог/фур/погрузчика), работает
+      //     на любой форме через кластеры ворот (layout.gates).
+      //   стандартная форма — штатный loaderSystem.js (проезды/полосы/LIFO).
+      //   своя форма — упрощённый маршрут в 2 плеча (customLoaderFleet.js),
+      //     полноценные проезды для произвольного контура — вне рамок этого захода.
+      // Всё — в тот же слот level.loaderSystem (общий интерфейс step/getStats/dispose).
       if (useLoader && index === 0 && loaderCount > 0 && modelState === "ready") {
-        level.loaderSystem = createLoaderSystem({
-          group: level.loaderGroup,
-          count: loaderCount,
-          capacityKg: loader.capacityKg,
-          cargoWeightKg: loader.cargoWeightKg,
-          speedMps: loader.speedMps,
-          metersPerUnit: chunkGrid.metersPerUnit,
-          cargoPerHour: loader.cargoPerHour / floorsCount,
-          truckPayload: loader.truckPayload,
-          slotsPerLane: loader.slotsPerLane,
-          routeLengthM: loader.routeLengthM,
-          cargo: loader.cargo,
-          startDelay: index * FLOOR_STAGGER_SECONDS,
-          energyProfile: energyProfiles.loader,
-        });
+        if (loaderType === "storagecube") {
+          level.loaderSystem = createStorageCubeFleet({
+            group: level.loaderGroup,
+            gates: layout.gates,
+            count: loaderCount,
+            energyProfile: energyProfiles.loader,
+            throughputPerHour: loader.cargoPerHour / floorsCount,
+          });
+        } else if (isDefaultShape(shape)) {
+          level.loaderSystem = createLoaderSystem({
+            group: level.loaderGroup,
+            count: loaderCount,
+            capacityKg: loader.capacityKg,
+            cargoWeightKg: loader.cargoWeightKg,
+            speedMps: loader.speedMps,
+            metersPerUnit: chunkGrid.metersPerUnit,
+            cargoPerHour: loader.cargoPerHour / floorsCount,
+            truckPayload: loader.truckPayload,
+            slotsPerLane: loader.slotsPerLane,
+            routeLengthM: loader.routeLengthM,
+            cargo: loader.cargo,
+            startDelay: index * FLOOR_STAGGER_SECONDS,
+            energyProfile: energyProfiles.loader,
+            robotFactory: loaderFactoryOf(loaderType),
+          });
+        } else {
+          level.loaderSystem = createCustomLoaderFleet({
+            group: level.loaderGroup,
+            shape,
+            count: loaderCount,
+            capacityKg: loader.capacityKg,
+            cargoWeightKg: loader.cargoWeightKg,
+            speedMps: loader.speedMps,
+            metersPerUnit: chunkGrid.metersPerUnit,
+            cargo: loader.cargo,
+            energyProfile: energyProfiles.loader,
+            robotFactory: loaderFactoryOf(loaderType),
+          });
+        }
       }
     });
 
-    drawFloorBase(st.floorCtx, { layout, armCount, vacuumCount, chunkGrid, slotsPerLane: loader.slotsPerLane });
+    drawFloorBase(st.floorCtx, { shape, layout, armCount, vacuumCount, chunkGrid, slotsPerLane: loader.slotsPerLane });
     st.floorTexture.needsUpdate = true;
 
     st.simAcc = 0;
     setStats(EMPTY_STATS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    shape,
     layout,
     chunkGrid,
     floorsCount,
     vacuumCount,
     vacuumSpeed,
+    vacuumType,
     armCount,
     armProd,
+    armType,
     loaderCount,
+    loaderType,
     energyProfiles,
     loader.capacityKg,
     loader.speedMps,
@@ -241,6 +302,7 @@ export function useSimulation(cfg) {
     loader.cargo.widthCm,
     loader.cargo.heightCm,
     loader.cargo.skuCount,
+    loader.cargo.oversizedSharePct,
     resetKey,
     modelState,
   ]);

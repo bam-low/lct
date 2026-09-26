@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { LANE_MIN_X } from "../layout.js";
 import { PALETTE } from "../constants.js";
 
 // Зарядные станции пылесосов — в юго-западном углу склада (левый угол при
@@ -19,9 +18,9 @@ export const STATION_PAD_DEPTH = 5.6;
 // Пылесос заезжает на станцию носом к стене, где стоит зарядное устройство.
 export const STATION_HEADING = 0;
 
-export function chargingStationPositions(count) {
+export function chargingStationPositions(count, laneMinX) {
   return Array.from({ length: count }, (_, i) => ({
-    x: LANE_MIN_X + 2 + i * STATION_PITCH,
+    x: laneMinX + 2 + i * STATION_PITCH,
     z: STATION_Z,
   }));
 }

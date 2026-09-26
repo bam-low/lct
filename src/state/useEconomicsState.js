@@ -1,15 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { defaultParamsFor } from "../domain/objectTypes.js";
 import { catalogFor, getCatalogItem } from "../domain/catalog.js";
-import { buildAllScenarios, computeRobotCounts, currentProcessOf, effectiveThroughput, speedFactorOf } from "../domain/warehouseAdapter.js";
+import {
+  buildAllScenarios,
+  computeRobotCounts,
+  currentProcessOf,
+  effectiveThroughput,
+  effectiveSlotsPerLane,
+  fleetPeakPowerKw,
+  requiredConveyorM,
+  speedFactorOf,
+} from "../domain/warehouseAdapter.js";
+import { checkCapacity } from "../domain/applicability.js";
 import { energyProfileOf } from "../simulation/energy.js";
 import {
   MAX_VACUUM_COUNT,
-  MAX_LOADER_COUNT,
   computeLayout,
   computeVacuumZoneAreaM2,
   normalizeRobotTypes,
 } from "../simulation/layout.js";
+import { deserializeShape, serializeShape } from "../simulation/shape/shapeTypes.js";
 import { loadProject, saveProject } from "./projectStore.js";
 
 const OBJECT_TYPE_ID = "warehouse"; // единственный рабочий тип объекта в этом заходе
@@ -48,9 +58,11 @@ function initialState() {
     loader: saved?.loaderSolutionId ?? firstSolutionId("loader"),
   };
 
+  const shape = deserializeShape(saved?.shape);
+
   // Количество роботов всегда задаётся вручную (степпер в симуляции), но
   // стартовое значение подсказываем расчётом, чтобы не начинать с крайних.
-  const layout = computeLayout(robotTypes, workZoneShareOf(params));
+  const layout = computeLayout(shape, robotTypes, workZoneShareOf(params));
 
   // Стартовое количество считаем на один этаж: на каждом этаже свой такой же парк,
   // а потоки операций заданы на всё здание.
@@ -65,6 +77,7 @@ function initialState() {
   return {
     params,
     robotTypes,
+    shape,
     vacuumSolutionId: solutionIds.vacuum,
     armSolutionId: solutionIds.arm,
     loaderSolutionId: solutionIds.loader,
@@ -99,12 +112,17 @@ export function useEconomicsState() {
   const [state, setState] = useState(initialState);
 
   useEffect(() => {
-    saveProject(state);
+    // shape.cells — Uint8Array, не переживает JSON.stringify как обычный массив
+    // (превратится в объект с числовыми ключами) — сериализуем явно.
+    saveProject({ ...state, shape: serializeShape(state.shape) });
   }, [state]);
 
   const typesKey = state.robotTypes.join(",");
   const workZoneShare = workZoneShareOf(state.params);
-  const layout = useMemo(() => computeLayout(state.robotTypes, workZoneShare), [state.robotTypes, workZoneShare]);
+  const layout = useMemo(
+    () => computeLayout(state.shape, state.robotTypes, workZoneShare),
+    [state.shape, state.robotTypes, workZoneShare]
+  );
   const floors = floorsOf(state.params);
   // Площадь уборки одного этажа и всего здания (для расчёта потребности в уборке).
   const floorVacuumZoneAreaM2 = computeVacuumZoneAreaM2(layout, state.params.floorAreaM2);
@@ -128,7 +146,7 @@ export function useEconomicsState() {
   const counts = {
     vacuumCount: layout.useVacuum ? clamp(state.manualVacuumCount, MAX_VACUUM_COUNT) : 0,
     armCount: layout.useArm ? clamp(state.manualArmCount, layout.maxArmCount) : 0,
-    loaderCount: layout.useLoader ? clamp(state.manualLoaderCount, MAX_LOADER_COUNT) : 0,
+    loaderCount: layout.useLoader ? clamp(state.manualLoaderCount, layout.maxLoaderCount) : 0,
   };
 
   // Расчётная рекомендация «по ТЗ 3.5.2» — пересчитывается на каждое изменение
@@ -150,7 +168,7 @@ export function useEconomicsState() {
   const recommendedCounts = {
     vacuumCount: layout.useVacuum ? clamp(recommended.vacuumCount, MAX_VACUUM_COUNT) : 0,
     armCount: layout.useArm ? clamp(recommended.armCount, layout.maxArmCount) : 0,
-    loaderCount: layout.useLoader ? clamp(recommended.loaderCount, MAX_LOADER_COUNT) : 0,
+    loaderCount: layout.useLoader ? clamp(recommended.loaderCount, layout.maxLoaderCount) : 0,
   };
 
   // Энергопрофили выбранных решений: время работы на зарядке, мощность и т.д.
@@ -171,6 +189,17 @@ export function useEconomicsState() {
     armCount: counts.armCount * floors,
     loaderCount: counts.loaderCount * floors,
   };
+
+  // Инфраструктурная применимость выбранного парка (ТЗ 3.4.1/3.4.3) — сверка с
+  // тем, что реально доступно на объекте: мощность электроснабжения и длина
+  // конвейера (только у решений, которым он нужен по каталогу).
+  const fleetGroups = [
+    { solution: activeSolutions.vacuum, count: totalCounts.vacuumCount },
+    { solution: activeSolutions.arm, count: totalCounts.armCount },
+    { solution: activeSolutions.loader, count: totalCounts.loaderCount },
+  ];
+  const powerCheck = checkCapacity(fleetPeakPowerKw(fleetGroups), state.params.availablePowerKw, "кВт");
+  const conveyorCheck = checkCapacity(requiredConveyorM(fleetGroups), state.params.conveyorLengthM, "м");
 
   const scenarios = useMemo(
     () =>
@@ -202,6 +231,7 @@ export function useEconomicsState() {
   const setParams = (partial) => setState((s) => ({ ...s, params: { ...s.params, ...partial } }));
 
   const setRobotTypes = (types) => setState((s) => ({ ...s, robotTypes: normalizeRobotTypes(types) }));
+  const setShape = (shape) => setState((s) => ({ ...s, shape }));
 
   const setVacuumSolutionId = (id) => setState((s) => ({ ...s, vacuumSolutionId: id }));
   const setArmSolutionId = (id) => setState((s) => ({ ...s, armSolutionId: id }));
@@ -217,6 +247,7 @@ export function useEconomicsState() {
     objectTypeId: OBJECT_TYPE_ID,
     params: state.params,
     robotTypes: state.robotTypes,
+    shape: state.shape,
     layout,
     floors,
     vacuumZoneAreaM2,
@@ -228,18 +259,22 @@ export function useEconomicsState() {
     totalCounts,
     workZoneShare,
     speedFactor: speedFactorOf(state.params),
+    slotsPerLane: effectiveSlotsPerLane(state.params),
     currentProcess: currentProcessOf(state.params, layout),
     throughputs: {
       vacuum: effectiveThroughput(activeSolutions.vacuum, state.params),
       arm: effectiveThroughput(activeSolutions.arm, state.params),
       loader: effectiveThroughput(activeSolutions.loader, state.params),
     },
+    powerCheck,
+    conveyorCheck,
     activeScenario: state.activeScenario,
     scenarios,
 
     setParam,
     setParams,
     setRobotTypes,
+    setShape,
     setVacuumSolutionId,
     setArmSolutionId,
     setLoaderSolutionId,

@@ -3,7 +3,7 @@ import { FLOOR } from "./layout.js";
 import { PALETTE, ISO_ELEV, SCENE_HEIGHT_PX } from "./constants.js";
 import { applyColorSpace, disposeTree } from "./sceneUtils.js";
 import { createChunkLabelLayer } from "./chunkLabels.js";
-import { createFloorLevel, createSharedLevelAssets, FLOOR_PITCH } from "./floorLevel.js";
+import { createFloorLevel, createSharedLevelAssets, rebuildLevelWalls, FLOOR_PITCH } from "./floorLevel.js";
 
 const CAM_DIST = 108;
 const FOCUS_EASE = 0.12;
@@ -97,7 +97,10 @@ export function createWarehouseScene(mount) {
   };
 
   // Ровно столько этажей, сколько нужно: лишние убираем, недостающие строим.
-  const setLevelCount = (count) => {
+  // shape — форма склада (общая на все этажи); если она изменилась с прошлого
+  // вызова, у уже существующих этажей пересобираются только стены (дешевле,
+  // чем пересоздавать этаж целиком — см. rebuildLevelWalls в floorLevel.js).
+  const setLevelCount = (count, shape) => {
     while (levels.length > count) {
       const level = levels.pop();
       levelsGroup.remove(level.group);
@@ -105,10 +108,12 @@ export function createWarehouseScene(mount) {
     }
 
     while (levels.length < count) {
-      const level = createFloorLevel(shared, chunkLabels, levels.length);
+      const level = createFloorLevel(shared, chunkLabels, levels.length, shape);
       levels.push(level);
       levelsGroup.add(level.group);
     }
+
+    if (shape) for (const level of levels) rebuildLevelWalls(level, shape);
   };
 
   // Активный этаж рисуется как обычно, остальные — полупрозрачными силуэтами:

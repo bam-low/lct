@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { MAX_VACUUM_COUNT, MAX_LOADER_COUNT, computeLayout } from "./layout.js";
+import { MAX_VACUUM_COUNT, computeLayout } from "./layout.js";
 import { computeFloorChunks } from "./chunkGrid.js";
 import { SCENE_HEIGHT_PX, LOAD_SLOWDOWN, VACUUM_SWATH } from "./constants.js";
 import { useSimulation } from "./useSimulation.js";
@@ -24,14 +24,18 @@ const zoomMaxFor = (floors) => 70 + 14 * (floors - 1);
 const ZOOM_MIN = 22;
 
 export default function WarehouseScene({
+  shape,
   robotTypes,
   floorAreaM2,
   floorsCount,
   vacuumCount,
   vacuumProd,
+  vacuumType,
   armCount,
   armProd,
+  armType,
   loaderCount,
+  loaderType,
   recommendedVacuumCount,
   recommendedArmCount,
   recommendedLoaderCount,
@@ -43,6 +47,7 @@ export default function WarehouseScene({
   cargoWidthCm,
   cargoHeightCm,
   skuCount,
+  oversizedCargoPct,
   slotsPerLane,
   routeLengthM,
   cargoPerHour,
@@ -62,7 +67,7 @@ export default function WarehouseScene({
   const [speedMult, setSpeedMult] = useState(1);
   const [topView, setTopView] = useState(false); // 2D-вид сверху вместо 3D-изометрии
 
-  const layout = useMemo(() => computeLayout(robotTypes, workZoneShare), [robotTypes, workZoneShare]);
+  const layout = useMemo(() => computeLayout(shape, robotTypes, workZoneShare), [shape, robotTypes, workZoneShare]);
   const chunkGrid = useMemo(() => computeFloorChunks(floorAreaM2), [floorAreaM2]);
   const { useVacuum, useArm, useLoader } = layout;
 
@@ -83,6 +88,7 @@ export default function WarehouseScene({
   const vacuumSpeed = useVacuum ? vacuumProd / (VACUUM_SWATH * 3600 * chunkGrid.areaPerUnit2) : 0;
 
   const { mountRef, stats, modelState, rotate } = useSimulation({
+    shape,
     layout,
     chunkGrid,
     floorsCount,
@@ -94,9 +100,12 @@ export default function WarehouseScene({
     resetKey,
     vacuumCount,
     vacuumSpeed,
+    vacuumType,
     armCount,
     armProd,
+    armType,
     loaderCount,
+    loaderType,
     energyProfiles,
     loader: {
       capacityKg: loaderCapacityKg,
@@ -106,7 +115,7 @@ export default function WarehouseScene({
       truckPayload,
       slotsPerLane,
       routeLengthM,
-      cargo: { lengthCm: cargoLengthCm, widthCm: cargoWidthCm, heightCm: cargoHeightCm, skuCount },
+      cargo: { lengthCm: cargoLengthCm, widthCm: cargoWidthCm, heightCm: cargoHeightCm, skuCount, oversizedSharePct: oversizedCargoPct },
     },
   });
 
@@ -245,7 +254,7 @@ export default function WarehouseScene({
             description={`Скорость ${loaderSpeedMps.toFixed(1)} м/с, грузоподъёмность ${loaderCapacityKg} кг, единица груза — ${cargoWeightKg} кг: с грузом погрузчик едет на ${fullLoadSlowdownPct}% медленнее. За каждыми воротами закреплён свой погрузчик. Фура привозит ${truckPayload} ед. и выгружает их разом.`}
             onManualChange={onManualLoaderCountChange}
             min={1}
-            max={MAX_LOADER_COUNT}
+            max={layout.maxLoaderCount}
             recommended={recommendedLoaderCount}
           />
         )}

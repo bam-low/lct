@@ -1,6 +1,8 @@
 import { FLOOR, GATE_XS, computeArmSlots } from "./layout.js";
 import { CANVAS_PX, PALETTE } from "./constants.js";
 import { toPx, rectToPx } from "./canvasCoords.js";
+import { CELL, cellAt, cellWorldOrigin } from "./shape/shapeTypes.js";
+import { isDefaultShape } from "./shape/shapeGeometry.js";
 import {
   AISLE_ZS,
   AISLE_HALF_WIDTH,
@@ -132,12 +134,12 @@ function drawLoaderFloor(ctx, slotsPerLane) {
 }
 
 // Площадки зарядных станций пылесосов — зелёные, по одной на робота.
-function drawChargingStations(ctx, vacuumCount) {
+function drawChargingStations(ctx, vacuumCount, laneMinX) {
   ctx.fillStyle = "rgba(79,155,144,0.28)";
   ctx.strokeStyle = "#4F9B90";
   ctx.lineWidth = 2;
 
-  for (const { x, z } of chargingStationPositions(vacuumCount)) {
+  for (const { x, z } of chargingStationPositions(vacuumCount, laneMinX)) {
     const pad = rectToPx(x - STATION_PAD_WIDTH / 2, x + STATION_PAD_WIDTH / 2, z - STATION_PAD_DEPTH / 2, z + STATION_PAD_DEPTH / 2);
     fillRect(ctx, pad);
     strokeRect(ctx, pad);
@@ -178,18 +180,69 @@ function drawRestrictedZone(ctx, zone) {
   ctx.fillText("ЗОНА РАЗГРУЗКИ · недоступна роботам", (rect.x0 + rect.x1) / 2, (rect.z0 + rect.z1) / 2);
 }
 
+// Клетки формы за пределами нарисованного контура (EMPTY) закрашиваются
+// внешним тоном поверх заливки пола — визуально читается как «снаружи здания».
+// На пресете по умолчанию таких клеток нет (весь грид залит FLOOR/GATE), так
+// что для него это no-op и картинка не меняется.
+function drawExteriorMask(ctx, shape) {
+  ctx.fillStyle = PALETTE.exterior;
+
+  for (let gz = 0; gz < shape.gridSize; gz++) {
+    for (let gx = 0; gx < shape.gridSize; gx++) {
+      if (cellAt(shape, gx, gz) !== CELL.EMPTY) continue;
+
+      const a = cellWorldOrigin(gx, gz);
+      const b = cellWorldOrigin(gx + 1, gz + 1);
+      fillRect(ctx, rectToPx(a.x, b.x, a.z, b.z));
+    }
+  }
+}
+
+// Клетки-стеллажи, нарисованные в конструкторе формы склада (CELL.RACK) —
+// нужен видимый маркер на полу, иначе они физически используются
+// (customLoaderFleet.js возит груз именно туда), но визуально неотличимы от
+// обычного пола, и пользователь не видит, где на самом деле его стеллажи.
+function drawRackCells(ctx, shape) {
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 1.5;
+
+  for (let gz = 0; gz < shape.gridSize; gz++) {
+    for (let gx = 0; gx < shape.gridSize; gx++) {
+      if (cellAt(shape, gx, gz) !== CELL.RACK) continue;
+
+      const a = cellWorldOrigin(gx, gz);
+      const b = cellWorldOrigin(gx + 1, gz + 1);
+      const outer = rectToPx(a.x, b.x, a.z, b.z);
+      const inset = (outer.x1 - outer.x0) * 0.14;
+      const rect = { x0: outer.x0 + inset, x1: outer.x1 - inset, z0: outer.z0 + inset, z1: outer.z1 - inset };
+
+      ctx.fillStyle = PALETTE.rack;
+      fillRect(ctx, rect);
+      strokeRect(ctx, rect);
+    }
+  }
+}
+
 // Статичный слой пола: один цвет по всей площади + площадки роборук + сетка
 // чанков + проезды и склад (если есть погрузчики). Покрытие пылесосов на нём не
 // рисуется — оно видно только по следу.
-export function drawFloorBase(ctx, { layout, armCount, vacuumCount, chunkGrid, slotsPerLane }) {
+//
+// Проезды/полосы хранения/парковки погрузчиков (drawLoaderFloor) — формула от
+// GATE_XS, рисуются только на пресете по умолчанию; на своей форме склада
+// маркеры стеллажей рисует drawRackCells (сама логистика — customLoaderFleet.js,
+// упрощённый маршрут без проездов, см. план).
+export function drawFloorBase(ctx, { shape, layout, armCount, vacuumCount, chunkGrid, slotsPerLane }) {
   ctx.clearRect(0, 0, CANVAS_PX, CANVAS_PX);
   ctx.fillStyle = PALETTE.floor;
   ctx.fillRect(0, 0, CANVAS_PX, CANVAS_PX);
 
+  if (shape) drawExteriorMask(ctx, shape);
+
   if (layout.restrictedZone) drawRestrictedZone(ctx, layout.restrictedZone);
-  if (layout.useLoader) drawLoaderFloor(ctx, slotsPerLane);
+  if (layout.useLoader && (!shape || isDefaultShape(shape))) drawLoaderFloor(ctx, slotsPerLane);
+  if (shape && !isDefaultShape(shape)) drawRackCells(ctx, shape);
   if (layout.armZone && armCount > 0) drawArmPads(ctx, layout.armZone, armCount);
-  if (layout.useVacuum) drawChargingStations(ctx, vacuumCount);
+  if (layout.useVacuum) drawChargingStations(ctx, vacuumCount, layout.vacuumZone.xMin);
 
   drawChunkGrid(ctx, chunkGrid);
 

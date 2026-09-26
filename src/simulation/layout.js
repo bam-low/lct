@@ -2,21 +2,22 @@
 // адаптера (warehouseAdapter): площадь зоны уборки должна совпадать в обоих
 // местах, иначе расчёт CAPEX/OPEX разъедется с тем, что видно в симуляции.
 //
-// Сцена всегда 100 × 100 условных единиц. Сколько это метров — решает площадь
+// Сцена всегда 100 × 100 условных единиц (канва пола/стен не меняет размер —
+// произвольная форма склада, нарисованная в конструкторе, просто маскирует
+// часть этой канвы, см. shape/). Сколько это метров — решает площадь
 // помещения (см. chunkGrid.js), здесь только относительная раскладка.
 
-export const FLOOR = 100;
+import { boundingBoxOf, computeGateClusters } from "./shape/shapeGeometry.js";
+import { FLOOR } from "./floorConstants.js";
+
+export { FLOOR };
 export const MARGIN = 10;
 
-export const LANE_MIN_X = -FLOOR / 2 + MARGIN;
-export const LANE_MAX_X = FLOOR / 2 - MARGIN;
-
-export const Z_MIN = -FLOOR / 2 + 3;
-// Южнее Z_MAX — полоса зарядных станций пылесосов, в зону уборки она не входит.
-export const Z_MAX = FLOOR / 2 - 8;
-
-// Стены. Ворота — в северной стене (z = -FLOOR/2): при стартовом положении
-// камеры это дальняя правая стена, проёмы в ней хорошо видны.
+// Ворота пресета по умолчанию — в северной стене (z = -FLOOR/2): при стартовом
+// положении камеры это дальняя правая стена, проёмы в ней хорошо видны. Для
+// произвольной формы фактические ворота считаются из неё (computeGateClusters
+// в computeLayout ниже) — эти константы нужны только пресету по умолчанию и
+// коду погрузчиков, который для него не тронут (storageLayout.js/GATE_XS).
 export const WALL_HEIGHT = 10;
 export const WALL_THICKNESS = 1.2;
 export const GATE_XS = [-40, -20, 0, 20, 40];
@@ -25,7 +26,7 @@ export const GATE_HEIGHT = 7.5;
 
 // Роботов одного типа не больше, чем помещается без наложения моделей.
 export const MAX_VACUUM_COUNT = 8;
-export const MAX_LOADER_COUNT = GATE_XS.length; // за каждыми воротами — свой погрузчик
+export const MAX_LOADER_COUNT = GATE_XS.length; // пресет по умолчанию; для своей формы — layout.maxLoaderCount
 const ARM_ROW_PITCH_MIN = 21.4; // длина конвейера роборуки с запасом
 const ARM_COLUMN_PITCH_MIN = 14; // ширина роборуки с конвейерами + проезд пылесоса между колонками
 export const MAX_ARM_COUNT = 16;
@@ -50,25 +51,36 @@ export function normalizeRobotTypes(types) {
   return ROBOT_SCENARIOS.find((s) => s.types.join(",") === key)?.types ?? DEFAULT_ROBOT_TYPES;
 }
 
-// Раскладка по выбранным типам роботов. robotTypes — массив id из ROBOT_TYPES;
-// workZoneShare (0..1) — какая часть пола доступна роботам, остальное — участок,
-// где они не работают (оборудование, запретные зоны).
-export function computeLayout(robotTypes, workZoneShare = 1) {
+// Раскладка по выбранным типам роботов. shape — форма склада (shape/shapeTypes.js,
+// buildDefaultShape() для стандартного прямоугольника); robotTypes — массив id
+// из ROBOT_TYPES; workZoneShare (0..1) — какая часть пола доступна роботам,
+// остальное — участок, где они не работают (оборудование, запретные зоны).
+export function computeLayout(shape, robotTypes, workZoneShare = 1) {
   const useVacuum = robotTypes.includes("vacuum");
   const useArm = robotTypes.includes("arm");
   const useLoader = robotTypes.includes("loader");
 
-  const usableWidth = LANE_MAX_X - LANE_MIN_X;
+  // Для пресета по умолчанию bounds — ровно {-50..50, -50..50}, то есть то же
+  // самое, что раньше давали константы LANE_MIN_X/LANE_MAX_X/Z_MIN/Z_MAX —
+  // отступы (MARGIN, +3, −8) те же, просто считаются от границ формы.
+  const bounds = boundingBoxOf(shape);
+  const laneMinX = bounds.xMin + MARGIN;
+  const laneMaxX = bounds.xMax - MARGIN;
+  const zMin = bounds.zMin + 3;
+  // Южнее zMax — полоса зарядных станций пылесосов, в зону уборки она не входит.
+  const zMax = bounds.zMax - 8;
+
+  const usableWidth = laneMaxX - laneMinX;
   // Роботам доступна южная часть пола; у северной стены (у ворот) — зона разгрузки,
   // куда пылесосы и роборуки не заходят.
   const share = Math.min(1, Math.max(0.3, workZoneShare));
-  const workZMin = Z_MAX - (Z_MAX - Z_MIN) * share;
-  const workZMax = Z_MAX;
+  const workZMin = zMax - (zMax - zMin) * share;
+  const workZMax = zMax;
 
   // Пылесосы мобильны и убирают весь рабочий пол, включая зону роборук — зоны
   // описывают, где стоит стационарное оборудование, а не делят пол физически.
   const vacuumZone = useVacuum
-    ? { xMin: LANE_MIN_X, width: usableWidth, zMin: workZMin, zMax: workZMax }
+    ? { xMin: laneMinX, width: usableWidth, zMin: workZMin, zMax: workZMax }
     : null;
 
   // Роборуки стационарны — у них своя полоса с конвейерами: правые 45% пола,
@@ -76,7 +88,7 @@ export function computeLayout(robotTypes, workZoneShare = 1) {
   const armWidth = useVacuum ? usableWidth * 0.45 : usableWidth;
   const armZone = useArm
     ? {
-        xMin: useVacuum ? LANE_MIN_X + usableWidth * 0.55 : LANE_MIN_X,
+        xMin: useVacuum ? laneMinX + usableWidth * 0.55 : laneMinX,
         width: armWidth,
         zMin: workZMin,
         zMax: workZMax,
@@ -84,7 +96,9 @@ export function computeLayout(robotTypes, workZoneShare = 1) {
     : null;
 
   // Зона разгрузки у ворот, недоступная роботам (рисуется штриховкой).
-  const restrictedZone = workZMin > Z_MIN + 0.01 && !useLoader ? { zMin: -FLOOR / 2, zMax: workZMin } : null;
+  const restrictedZone = workZMin > zMin + 0.01 && !useLoader ? { zMin: bounds.zMin, zMax: workZMin } : null;
+
+  const gates = computeGateClusters(shape);
 
   return {
     useVacuum,
@@ -94,6 +108,9 @@ export function computeLayout(robotTypes, workZoneShare = 1) {
     vacuumZone,
     armZone,
     maxArmCount: maxArmCountOf(armWidth, workZMax - workZMin),
+    maxLoaderCount: Math.max(1, gates.length),
+    gates,
+    bounds,
   };
 }
 
