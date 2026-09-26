@@ -1,16 +1,49 @@
-# React + Vite
+# Платформа подбора роботизированных решений
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Экспресс-предынвестиционная оценка роботизации объекта (склад, аэропорт — 3D-визуализация Three.js + расчёт экономики CAPEX/OPEX/ROI/payback). Хакатон ФЦ БАС.
 
-Currently, two official plugins are available:
+Поток: параметры объекта → подбор решения из каталога → сравнение сценариев (без роботизации / покупка / роботы как услуга) → проверка расчёта симуляцией.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Запуск
 
-## React Compiler
+```bash
+npm install
+npm run dev      # http://localhost:5173
+npm run lint     # oxlint
+npm run build    # прод-сборка (GitHub Pages, base: '/lct/' в vite.config.js)
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Структура
 
-## Expanding the Oxlint configuration
+```
+src/
+  domain/          — экономические формулы, каталог решений, применимость (без React, без Three.js)
+    economics.js, scenarioEngine.js   — общее «ядро» расчёта (не знает про конкретный тип объекта)
+    warehouseAdapter.js, airportAdapter.js — адаптеры под конкретный тип объекта
+    catalog.js       — демо-каталог роботов (реальные модели + сгенерированные)
+    objectTypes.js   — схемы параметров по типам объектов
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+  state/           — React-хуки состояния (useEconomicsState.js — склад, useAirportEconomicsState.js — аэропорт)
+                     + projectStore.js (localStorage, временная замена бэкенда)
+
+  simulation/       — 3D-сцена склада (Three.js)
+    layout.js, shape/          — геометрия склада; shape/ — конструктор произвольной формы
+                                  (рисуемая форма, см. components/warehouse/ShapeEditor.jsx)
+    walls.js, floor.js, sceneSetup.js, floorLevel.js — рендер стен/пола/сцены
+    vacuums/, arms/, loaders/   — три флота роботов (уборка, сортировка, погрузка) —
+                                  каждый со своей симуляцией (маршруты, заряд, очереди)
+    robots/                    — 3D-модели роботов (GLB и процедурные)
+    airport/                   — отдельная 3D-сцена аэропорта (параллельная складской)
+
+  apps/            — WarehouseApp.jsx / AirportApp.jsx — экран настроек + результатов на тип объекта
+  components/      — переиспользуемые UI-компоненты (economics/, ui/, warehouse/)
+  App.jsx          — тонкий роутер между типами объектов
+```
+
+## Конструктор формы склада
+
+Форма склада рисуется как пиксель-арт по сетке 25×25 (кнопка «Своя форма склада» на экране настроек) — стены и ворота строятся по нарисованному контуру. Стандартный прямоугольный склад — просто пресет по умолчанию в той же системе. Погрузчики на произвольной форме используют упрощённый маршрут (ворота ↔ ближайший стеллаж по прямой), без полноценной системы проездов — это единственное существенное ограничение v1.
+
+## Данные
+
+3D-модели роботов — `public/models/*.glb`. Каталог демо-решений с допущениями — `src/domain/catalog.js` (не финальные цены/ТТХ, для экспресс-оценки).
