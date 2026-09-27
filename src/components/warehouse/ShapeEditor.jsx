@@ -153,7 +153,7 @@ export default function ShapeEditor({ shape, floorAreaM2, onSave, onClose }) {
 
   const handleSave = () => {
     const bbox = boundingBoxOf(draft);
-    onSave({ ...cloneShape(draft), isDefault: false, bbox });
+    onSave({ ...cloneShape(draft), bbox });
     onClose();
   };
 

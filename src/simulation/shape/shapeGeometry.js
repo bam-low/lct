@@ -1,5 +1,5 @@
 import { FLOOR } from "../floorConstants.js";
-import { CELL, cellAt, cellWorldOrigin } from "./shapeTypes.js";
+import { CELL, cellAt, cellWorldOrigin, buildDefaultShape } from "./shapeTypes.js";
 
 // Геометрия, выводимая из нарисованной формы склада: границы, кластеры ворот,
 // сегменты стен. Работает на любой форме (не только прямоугольной) — обход
@@ -168,6 +168,22 @@ function finalizeRun(run, side, normal, line, worldOf) {
     : { normal, hasGate: run.isGate, x0: lineWorld, x1: lineWorld, z0: t0, z1: t1 };
 }
 
+// Структурное сравнение с пресетом по умолчанию, а не флаг shape.isDefault —
+// флаг легко потерять (например, ShapeEditor.handleSave всегда ставил false,
+// даже когда черновик после «Сбросить к стандартной форме» был именно
+// стандартной формой), а это ломает погрузчики/пол молча. Сравнение по
+// клеткам не ошибается независимо от того, как получена форма.
+let cachedDefault = null;
+
 export function isDefaultShape(shape) {
-  return !!shape?.isDefault;
+  if (!shape?.cells) return false;
+  if (!cachedDefault) cachedDefault = buildDefaultShape();
+
+  if (shape.gridSize !== cachedDefault.gridSize || shape.cells.length !== cachedDefault.cells.length) return false;
+
+  for (let i = 0; i < shape.cells.length; i++) {
+    if (shape.cells[i] !== cachedDefault.cells[i]) return false;
+  }
+
+  return true;
 }

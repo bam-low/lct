@@ -57,14 +57,16 @@ export function buildDefaultShape() {
     for (const gx of columns) setCellAt(shape, gx, 0, CELL.GATE);
   }
 
-  shape.isDefault = true;
   return shape;
 }
 
 // Сериализация в/из JSON (Uint8Array не переживает JSON.stringify напрямую) —
-// используется useEconomicsState.js при сохранении/загрузке проекта.
+// используется useEconomicsState.js при сохранении/загрузке проекта. Форма
+// «по умолчанию» определяется структурным сравнением клеток
+// (shapeGeometry.js/isDefaultShape), а не отдельным флагом — флаг слишком
+// легко потерять или выставить неверно при сохранении/клонировании.
 export function serializeShape(shape) {
-  return { gridSize: shape.gridSize, cellSize: shape.cellSize, cells: Array.from(shape.cells), isDefault: !!shape.isDefault };
+  return { gridSize: shape.gridSize, cellSize: shape.cellSize, cells: Array.from(shape.cells) };
 }
 
 export function deserializeShape(raw) {
@@ -72,12 +74,11 @@ export function deserializeShape(raw) {
 
   const shape = makeEmptyShape(raw.gridSize);
   shape.cells.set(raw.cells.slice(0, shape.cells.length));
-  shape.isDefault = !!raw.isDefault;
   return shape;
 }
 
 export function cloneShape(shape) {
-  return { gridSize: shape.gridSize, cellSize: shape.cellSize, cells: shape.cells.slice(), isDefault: !!shape.isDefault };
+  return { gridSize: shape.gridSize, cellSize: shape.cellSize, cells: shape.cells.slice() };
 }
 
 export { HALF_GRID };
