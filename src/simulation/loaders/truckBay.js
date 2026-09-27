@@ -1,6 +1,10 @@
 import * as THREE from "three";
 import { FLOOR, WALL_THICKNESS } from "../layout.js";
 import { makeTruck } from "../robots/truckRobot.js";
+import { createMaterializeFade } from "../sceneUtils.js";
+
+const FADE_IN_DURATION_S = 1.4;
+const FADE_OUT_DURATION_S = 2.2;
 
 // Проём ворот с фурой: фура подъезжает задом, открывает двери, стоит, пока идёт
 // перегрузка (её ведёт loaderSystem), закрывает двери и уезжает.
@@ -48,6 +52,9 @@ export function createTruckBay({ group, gateX, gateIndex, speed }) {
 
     group.remove(truck.model.group);
     truck.model.dispose();
+    // Материалы, склонированные под плавное проявление (см. begin), не входят
+    // в общий шаблон модели фуры и не освобождаются нигде больше.
+    truck.fade.disposeMaterials();
     truck = null;
   }
 
@@ -58,10 +65,15 @@ export function createTruckBay({ group, gateX, gateIndex, speed }) {
     truck = { model, kind, state: "arriving", z: REAR_Z - APPROACH_DISTANCE, timer: 0, leaveSpeed: 0 };
     model.setDoors(0);
     place(truck.z, 1, true);
+    // Фура плавно проявляется вместо мгновенного появления — как будто
+    // выныривает из дымки на подъезде (жалоба пользователя: было слишком резко).
+    truck.fade = createMaterializeFade(model.group, FADE_IN_DURATION_S);
   }
 
   function update(dt) {
     if (!truck) return;
+
+    truck.fade.update(dt);
 
     switch (truck.state) {
       case "arriving": {
@@ -92,6 +104,9 @@ export function createTruckBay({ group, gateX, gateIndex, speed }) {
         if (truck.timer >= DOOR_SECONDS) {
           truck.state = "leaving";
           truck.leaveSpeed = 0;
+          // Растворяется в дымке по пути к воротам, а не пропадает мгновенно
+          // при выезде за DEPART_DISTANCE (жалоба пользователя).
+          truck.fade.reverse(FADE_OUT_DURATION_S);
         }
         break;
 

@@ -18,8 +18,13 @@ const GHOST_OPACITY = 0.17;
 export function createWarehouseScene(mount) {
   const width = mount.clientWidth;
 
+  // near/far отодвинуты за пределы пола (диагональ FLOOR=100 ~141, худший
+  // случай ~ CAM_DIST+71≈179) — туман не должен подёргивать сам пол дымкой при
+  // повороте камеры. Плавное появление фур на въезде — отдельная анимация
+  // прозрачности (createMaterializeFade в truckBay.js), не завязанная на
+  // дистанцию до камеры.
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0x77798f, 145, 245);
+  scene.fog = new THREE.Fog(0x77798f, 200, 340);
 
   addLights(scene);
 
