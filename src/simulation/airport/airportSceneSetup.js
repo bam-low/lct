@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { PALETTE, ISO_ELEV, SCENE_HEIGHT_PX } from "../constants.js";
 import { applyColorSpace, disposeTree } from "../sceneUtils.js";
-import { TERMINAL, APRON, DEPOT_ZONE, DEPOT_CHARGE, RUNWAY, GROUND } from "./airportLayout3D.js";
+import { TERMINAL, APRON, DEPOT_CHARGE, RUNWAY, GROUND } from "./airportLayout3D.js";
 import { createAirportWalls } from "./airportWalls.js";
+import { createGroundTexture, redrawGround } from "./airportGround.js";
 
 const CAM_DIST = 130;
 const FOCUS_EASE = 0.12;
@@ -16,15 +17,20 @@ const QUARTER = Math.PI / 2;
 export function createAirportScene(mount) {
   const width = mount.clientWidth;
 
+  // near/far отодвинуты за пределы всей площадки (диагональ GROUND ~185 ед. +
+  // CAM_DIST=130, худший случай ~230) — туман не должен ложиться дымкой на
+  // перрон/гейты при обычном вращении камеры (жалоба: «пол под пеленой»).
+  // Для эффекта «выныривания из тумана» у новых самолётов/фур — отдельная,
+  // управляемая анимация прозрачности (createMaterializeFade), не завязанная
+  // на дистанцию до камеры.
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0x77798f, 170, 300);
+  scene.fog = new THREE.Fog(0x77798f, 280, 460);
 
   addLights(scene);
 
   const staticGroup = new THREE.Group();
-  addGround(staticGroup);
+  const ground = addGround(staticGroup);
   addControlTower(staticGroup);
-  addDepotZone(staticGroup);
   addChargeStations(staticGroup);
   const runway = addRunway(staticGroup);
   scene.add(staticGroup);
@@ -110,6 +116,7 @@ export function createAirportScene(mount) {
     disposeTree(dynamicGroup);
     disposeTree(walls.group);
     runway.dispose();
+    ground.dispose();
     renderer.dispose();
     if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
   };
@@ -124,6 +131,7 @@ export function createAirportScene(mount) {
     QUARTER,
     cameraState,
     runwayPlanes: runway.group,
+    redrawGround: ground.redraw,
     updateCamera,
     applyFrustum,
     render: () => renderer.render(scene, camera),
@@ -163,29 +171,29 @@ function addLights(scene) {
   scene.add(rimLight);
 }
 
+// Единая канвас-текстура на всю площадку (airportGround.js) вместо плоских
+// залитых Mesh без разметки — терминал, перрон со стоянками гейтов и осевой
+// линией руления, депо со штриховкой и подписью, сетка чанков. redraw()
+// вызывается заново при смене числа гейтов (позиции стоянок меняются).
 function addGround(group) {
-  const w = GROUND.xMax - GROUND.xMin;
-  const d = GROUND.zMax - GROUND.zMin;
+  const { ctx, texture, width, height } = createGroundTexture();
 
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(w, d),
-    new THREE.MeshStandardMaterial({ color: 0xc7cbe0, flatShading: true, roughness: 0.95 })
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(GROUND.xMax - GROUND.xMin, GROUND.zMax - GROUND.zMin),
+    new THREE.MeshStandardMaterial({ map: texture, flatShading: true, roughness: 0.92 })
   );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.set((GROUND.xMin + GROUND.xMax) / 2, 0, (GROUND.zMin + GROUND.zMax) / 2);
-  ground.receiveShadow = true;
-  group.add(ground);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set((GROUND.xMin + GROUND.xMax) / 2, 0, (GROUND.zMin + GROUND.zMax) / 2);
+  mesh.receiveShadow = true;
+  group.add(mesh);
 
-  const apronW = APRON.xMax - APRON.xMin;
-  const apronD = APRON.zMax - APRON.zMin;
-  const apron = new THREE.Mesh(
-    new THREE.PlaneGeometry(apronW, apronD),
-    new THREE.MeshStandardMaterial({ color: 0xb7bcd6, flatShading: true, roughness: 0.9 })
-  );
-  apron.rotation.x = -Math.PI / 2;
-  apron.position.set((APRON.xMin + APRON.xMax) / 2, 0.01, (APRON.zMin + APRON.zMax) / 2);
-  apron.receiveShadow = true;
-  group.add(apron);
+  const redraw = (gatesCount) => {
+    redrawGround(ctx, width, height, gatesCount);
+    texture.needsUpdate = true;
+  };
+  redraw(1);
+
+  return { redraw, dispose: () => texture.dispose() };
 }
 
 // Терминал сам по себе — теперь только стены (airportWalls.js, растворяются
@@ -220,30 +228,13 @@ function addControlTower(group) {
   group.add(towerRoof);
 }
 
-function addDepotZone(group) {
-  const w = DEPOT_ZONE.xMax - DEPOT_ZONE.xMin;
-  const d = DEPOT_ZONE.zMax - DEPOT_ZONE.zMin;
-
-  const patch = new THREE.Mesh(
-    new THREE.PlaneGeometry(w, d),
-    new THREE.MeshStandardMaterial({ color: PALETTE.crateA, flatShading: true, roughness: 0.85, opacity: 0.7, transparent: true })
-  );
-  patch.rotation.x = -Math.PI / 2;
-  patch.position.set((DEPOT_ZONE.xMin + DEPOT_ZONE.xMax) / 2, 0.02, (DEPOT_ZONE.zMin + DEPOT_ZONE.zMax) / 2);
-  patch.receiveShadow = true;
-  group.add(patch);
-}
-
+// Круглая площадка зарядки нарисована на текстуре земли (airportGround.js);
+// здесь — только вертикальный маркер (столбик + светодиод), заметный в 3D.
 function addChargeStations(group) {
   const mat = new THREE.MeshStandardMaterial({ color: PALETTE.storage, flatShading: true, roughness: 0.6 });
   const ledMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: new THREE.Color(0x4f9b90), emissiveIntensity: 0.7, flatShading: true });
 
   const p = DEPOT_CHARGE;
-  const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 0.05, 16), new THREE.MeshStandardMaterial({ color: 0x9be3c2, flatShading: true, roughness: 0.8 }));
-  pad.position.set(p.x, 0.03, p.z);
-  pad.receiveShadow = true;
-  group.add(pad);
-
   const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.2, 0.3), mat);
   post.position.set(p.x, 0.6, p.z);
   post.castShadow = true;
@@ -257,20 +248,38 @@ function addChargeStations(group) {
 // Декоративная ВПП «сбоку на фоне» — не участвует в расчётах. Возвращает
 // group с самолётами-плейсхолдерами, которые useAirportSimulation3D двигает
 // по ней (заход на посадку / взлёт), плюс dispose для геометрии полосы.
+// ВАЖНО: полоса строится из BoxGeometry с поворотом только вокруг Y (не
+// PlaneGeometry с составным поворотом X+Z) — раньше составной поворот визуально
+// разворачивал полосу мимо фактической линии захода самолёта (та всегда честно
+// считалась по RUNWAY.x1/z1→x2/z2), из-за чего самолёты «летали вопреки
+// полосе». Поворот вокруг одной оси однозначен: локальная +Z (длина бокса)
+// совпадает с направлением (dx,dz) при rotation.y = atan2(dx,dz).
 function addRunway(group) {
   const dx = RUNWAY.x2 - RUNWAY.x1;
   const dz = RUNWAY.z2 - RUNWAY.z1;
   const length = Math.hypot(dx, dz);
-  const angle = Math.atan2(dx, dz);
+  const yaw = Math.atan2(dx, dz);
 
-  const stripGeometry = new THREE.PlaneGeometry(RUNWAY.width, length);
-  const stripMaterial = new THREE.MeshStandardMaterial({ color: 0xacb0c4, flatShading: true, roughness: 0.9, transparent: true, opacity: 0.4 });
+  const stripGeometry = new THREE.BoxGeometry(RUNWAY.width, 0.03, length);
+  const stripMaterial = new THREE.MeshStandardMaterial({ color: 0x6c6f85, flatShading: true, roughness: 0.9, transparent: true, opacity: 0.75 });
   const strip = new THREE.Mesh(stripGeometry, stripMaterial);
-  strip.rotation.x = -Math.PI / 2;
-  strip.rotation.z = -angle;
+  strip.rotation.y = yaw;
   strip.position.set((RUNWAY.x1 + RUNWAY.x2) / 2, 0.015, (RUNWAY.z1 + RUNWAY.z2) / 2);
   strip.receiveShadow = true;
   group.add(strip);
+
+  // Осевая пунктирная линия — короткие штрихи вдоль всей полосы, чтобы «полоса»
+  // читалась как ВПП с одного взгляда, а не как случайная серая лента.
+  const dashGeometry = new THREE.BoxGeometry(0.35, 0.02, length / 14);
+  const dashMaterial = new THREE.MeshStandardMaterial({ color: 0xf5efe0, flatShading: true, roughness: 0.6 });
+  const dashCount = 7;
+  for (let i = 0; i < dashCount; i++) {
+    const dash = new THREE.Mesh(dashGeometry, dashMaterial);
+    const t = (i + 0.5) / dashCount;
+    dash.rotation.y = yaw;
+    dash.position.set(RUNWAY.x1 + dx * t, 0.03, RUNWAY.z1 + dz * t);
+    group.add(dash);
+  }
 
   const runwayGroup = new THREE.Group();
   group.add(runwayGroup);
@@ -280,6 +289,8 @@ function addRunway(group) {
     dispose: () => {
       stripGeometry.dispose();
       stripMaterial.dispose();
+      dashGeometry.dispose();
+      dashMaterial.dispose();
     },
   };
 }

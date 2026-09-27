@@ -69,6 +69,21 @@ function buildSolidWall(group, material, side) {
   }
 }
 
+// Карниз по периметру крыши — тонкая непрозрачная окантовка, не участвует в
+// затухании стен (видна с любого ракурса). Даёт зданию читаемый верхний край
+// вместо резко обрезанных стен без крыши.
+function addParapet(group) {
+  const material = new THREE.MeshStandardMaterial({ color: PALETTE.wall, flatShading: true, roughness: 0.7 });
+  const y0 = TERMINAL_HEIGHT;
+  const y1 = TERMINAL_HEIGHT + 0.22;
+  const pad = WALL_THICKNESS;
+
+  addBox(group, material, [TERMINAL.xMin - pad, TERMINAL.xMax + pad], [y0, y1], [TERMINAL.zMin - pad, TERMINAL.zMin - pad + 0.35]);
+  addBox(group, material, [TERMINAL.xMin - pad, TERMINAL.xMax + pad], [y0, y1], [TERMINAL.zMax - 0.35 + pad, TERMINAL.zMax + pad]);
+  addBox(group, material, [TERMINAL.xMin - pad, TERMINAL.xMin - pad + 0.35], [y0, y1], [TERMINAL.zMin - pad, TERMINAL.zMax + pad]);
+  addBox(group, material, [TERMINAL.xMax + pad - 0.35, TERMINAL.xMax + pad], [y0, y1], [TERMINAL.zMin - pad, TERMINAL.zMax + pad]);
+}
+
 export function createAirportWalls() {
   const group = new THREE.Group();
   const walls = [];
@@ -96,6 +111,8 @@ export function createAirportWalls() {
       walls.push({ normal, materials: [material] });
     }
   }
+
+  addParapet(group);
 
   // theta — угол камеры вокруг терминала (тот же смысл, что у cameraState.theta).
   const update = (theta) => {

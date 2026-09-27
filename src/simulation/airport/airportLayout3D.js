@@ -21,6 +21,20 @@ export const DEPOT_CHARGE = { x: -46, z: -40 };
 
 export const MAX_VISIBLE_GATES = 10;
 
+// Самолёт паркуется настолько южнее линии гейтов, чтобы нос (при развороте
+// носом к терминалу) не протыкал стену — фюзеляж ~4.5 ед. от центра до носа,
+// стена в GATE_Z..GATE_Z+WALL_THICKNESS, поэтому центр должен быть заметно
+// южнее. Транспортировщик обслуживает борт сбоку, ближе к передней части,
+// не наезжая на сам фюзеляж (тот стоит по оси гейта).
+export const GATE_STAND_OFFSET_Z = 8;
+export const TRANSPORTER_STAND_X_OFFSET = 3;
+export const TRANSPORTER_STAND_Z_OFFSET = 4;
+
+// Осевая линия руления — общая точка отсчёта и для разметки пола
+// (airportGround.js), и для маршрута самолёта при заходе с ВПП (см.
+// useAirportSimulation3D.js) — одна и та же линия, а не два независимых числа.
+export const TAXI_Z = APRON.zMin + (APRON.zMax - APRON.zMin) * 0.62;
+
 // Позиции гейтов вдоль южной границы терминала.
 export function gatePositions(gatesCount) {
   const count = Math.max(1, Math.min(MAX_VISIBLE_GATES, gatesCount));

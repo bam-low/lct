@@ -10,12 +10,12 @@ const ZOOM_MAX = 110;
 const ZOOM_DEFAULT = 62;
 
 const LEGEND_ITEMS = [
-  { color: "#9C94C0", kind: "zone", label: "Терминал" },
-  { color: "#b7bcd6", kind: "zone", label: "Перрон" },
+  { color: "#464549", kind: "zone", label: "Терминал (пол)" },
+  { color: "#8992AD", kind: "zone", label: "Перрон — стоянки гейтов и линия руления" },
   { color: "#E5A13F", kind: "zone", label: "Депо транспортировщиков" },
-  { color: "#9be3c2", kind: "zone", label: "Зарядная станция" },
-  { color: "#1b1d28", kind: "dot", label: "Транспортировщик (реальная модель — низкая платформа на колёсах)" },
-  { color: "rgba(154,160,189,0.7)", kind: "line", label: "ВПП сбоку — декоративный фон" },
+  { color: "#4F9B90", kind: "zone", label: "Зарядная станция" },
+  { color: "#1b1d28", kind: "dot", label: "Транспортировщик — везёт груз от самолёта в депо и обратно" },
+  { color: "rgba(154,160,189,0.7)", kind: "line", label: "ВПП сбоку — самолёты садятся и рулят на свободный гейт" },
 ];
 
 // 3D-визуализация аэропорта — та же основа, что у склада (изометрия +
