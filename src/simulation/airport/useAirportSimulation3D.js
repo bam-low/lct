@@ -16,6 +16,7 @@ import {
 } from "./airportLayout3D.js";
 import { makeTransporterRobot } from "../robots/transporterRobot.js";
 import { makeAircraft } from "./robots/aircraftModel.js";
+import { makeBaggageTrain } from "./robots/baggageTugModel.js";
 import { createCargoFactory } from "../loaders/cargo.js";
 
 const MAX_FRAME_SECONDS = 0.1;
@@ -38,6 +39,17 @@ const CONVEYOR_SERVICE = { x: CONVEYOR_START.x + 1.6, z: CONVEYOR_Z + 1.6 };
 const TRANSPORTER_SPEED = 4.5; // ед. сцены/с — единая скорость на всех участках маршрута
 const AT_GATE_SECONDS = 2;
 const AT_CONVEYOR_SECONDS = 1.2;
+
+// Багажные тягачи — второй вид робота на сцене аэропорта, по ТЗ («Беспилотный
+// тягач», см. Примеры_решений_типы_объектов.docx). Декоративный фоновый
+// процесс (как самолёты на дальней ВПП) — курсируют по перрону вдоль линии
+// гейтов, не участвуют в расчёте экономики (там по-прежнему один процесс —
+// транспортировка, как и раньше).
+const TUG_COUNT = 2;
+const TUG_SPEED = 3.4;
+const TUG_MARGIN = 6;
+const TUG_LANE_GAP = 3.2;
+const TUG_FADE_SECONDS = 1.4;
 const AT_BASE_SECONDS = 1;
 
 function lerp(a, b, t) {
@@ -143,7 +155,7 @@ function dispatchTransporters(st) {
   const { gates, transporters } = st.entities;
 
   for (const gate of gates) {
-    if (!gate.occupied || gate.servedBy !== null) continue;
+    if (!gate.planeParked || gate.servedBy !== null) continue;
 
     const idleBot = transporters.find((bot) => bot.phase === "idle");
     if (!idleBot) break;
@@ -218,7 +230,7 @@ export function useAirportSimulation3D({
     // начала. Телетрап — часть инфраструктуры терминала, виден всегда.
     const gates = gatePositions(gatesCount).map((pos) => {
       makeJetBridge(pos, st.dynamicGroup);
-      return { ...pos, occupied: false, servedBy: null };
+      return { ...pos, occupied: false, planeParked: false, servedBy: null };
     });
 
     // Груз на платформе — иначе транспортировщик просто ездит туда-сюда без
@@ -254,6 +266,16 @@ export function useAirportSimulation3D({
       };
     });
 
+    const tugs = Array.from({ length: TUG_COUNT }, (_, i) => {
+      const mesh = makeBaggageTrain(3);
+      const z = TAXI_Z + 3 + i * TUG_LANE_GAP;
+      const startX = i % 2 === 0 ? TERMINAL.xMin + TUG_MARGIN : TERMINAL.xMax - TUG_MARGIN;
+      mesh.position.set(startX, 0, z);
+      st.dynamicGroup.add(mesh);
+
+      return { mesh, x: startX, z, dir: i % 2 === 0 ? 1 : -1, fade: createMaterializeFade(mesh, TUG_FADE_SECONDS) };
+    });
+
     st.entities = {
       gates,
       transporters,
@@ -262,6 +284,7 @@ export function useAirportSimulation3D({
       conveyorOccupiedBy: null,
       planes: [],
       nextPlaneIn: 3,
+      tugs,
     };
     st.opsDone = 0;
     st.simSeconds = 0;
@@ -392,6 +415,31 @@ function step(st, dt) {
   stepTransporters(st, dt);
   stepConveyor(st, dt);
   stepPlanes(st, dt);
+  stepTugs(st, dt);
+}
+
+// Багажные тягачи едут туда-сюда вдоль перрона по своей полосе, разворачиваясь
+// у краёв терминала — простой декоративный патруль (как самолёты на дальней
+// ВПП), не завязан на гейты/фуры/экономику.
+function stepTugs(st, dt) {
+  const minX = TERMINAL.xMin + TUG_MARGIN;
+  const maxX = TERMINAL.xMax - TUG_MARGIN;
+
+  for (const tug of st.entities.tugs) {
+    tug.fade.update(dt);
+    tug.x += tug.dir * TUG_SPEED * dt;
+
+    if (tug.x >= maxX) {
+      tug.x = maxX;
+      tug.dir = -1;
+    } else if (tug.x <= minX) {
+      tug.x = minX;
+      tug.dir = 1;
+    }
+
+    tug.mesh.position.set(tug.x, 0, tug.z);
+    tug.mesh.rotation.y = tug.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+  }
 }
 
 // Транспортировщик едет по маршруту депо → дверь гейта → место у борта
@@ -588,6 +636,10 @@ function stepPlanes(st, dt) {
           plane.phase = "parked";
           plane.heading = Math.PI / 2; // точно носом к терминалу на стоянке
           plane.mesh.rotation.set(0, plane.heading, 0);
+          // Транспортировщик едет только к реально прибывшему борту, а не к
+          // ещё летящему/рулящему (жалоба пользователя: раньше ехал сразу
+          // после посадки, до фактического прибытия на гейт).
+          plane.gate.planeParked = true;
         }
       }
     }
