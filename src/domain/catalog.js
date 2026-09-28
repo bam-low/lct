@@ -400,8 +400,8 @@ export const CATALOG = [
   {
     id: "floor-washer-1",
     identification: {
-      vendor: "Мойдодыр",
-      name: "Мойдодыр W1",
+      vendor: "АкваБот",
+      name: "АкваБот AB-200",
       type: "washer",
       purpose: "Влажная мойка полов щёткой (не сухая уборка пылесосом)",
       country: "РФ",
