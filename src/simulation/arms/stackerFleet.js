@@ -17,16 +17,20 @@ import { disposeTree } from "../sceneUtils.js";
 // в useSimulation.js — прямая параллель loaderType==="storagecube").
 // ============================================================
 
-// Имена узлов внутри stacker.glb (заданы автором модели) — двигаем их каждый
-// цикл, чтобы установка не стояла истуканом: манипулятор поднимает-опускает
-// заготовку, экструдер приминает её на стол, грузы едут по мини-ленте и
-// возвращаются в начало на новом цикле.
+// Имена узлов внутри stacker.glb (заданы автором модели). По уточнению
+// пользователя движутся по-разному: манипулятор — влево-вправо, экструдер и
+// его тяги (стержни внутри стойки, которые толкают его вверх-вниз) — вместе
+// вверх-вниз в такте манипулятора, а грузы — непрерывно едут по мини-ленте
+// своим отдельным циклом, не завязанным на такт манипулятора.
 const NODE_NAMES = {
   manipulator: "мини манипулятор",
   extruder: "Экструдер",
+  extruderRod: "тяги экструдера",
   cargoBig: "Большой груз",
   cargoSmall: "маленький груз",
 };
+
+const BELT_CYCLE_S = 1.6; // отдельный, более быстрый цикл ленты — груз едет непрерывно, а не раз за такт манипулятора
 
 export function createStackerFleet({ group, zone, count, armProd, energyProfile }) {
   const cycleDuration = 1 / Math.max(armProd / 60, 0.001);
@@ -49,7 +53,7 @@ export function createStackerFleet({ group, zone, count, armProd, energyProfile 
       }
     }
 
-    return { group: model, nodes, restPos, phase: Math.random() };
+    return { group: model, nodes, restPos, phase: Math.random(), beltPhase: Math.random() };
   });
 
   const meters = arms.map(() => createEnergyMeter(energyProfile));
@@ -64,23 +68,24 @@ export function createStackerFleet({ group, zone, count, armProd, energyProfile 
       const prevPhase = arm.phase;
       arm.phase = (arm.phase + dt / cycleDuration) % 1;
       if (arm.phase < prevPhase) opsDone += 1;
+      arm.beltPhase = (arm.beltPhase + dt / BELT_CYCLE_S) % 1;
 
       const t = arm.phase;
-      const punch = Math.sin(t * Math.PI * 2) * 0.5 + 0.5; // 0..1..0 за цикл — приход/отход манипулятора и экструдера
+      const punch = Math.sin(t * Math.PI * 2) * 0.5 + 0.5; // 0..1..0 за такт — ход экструдера с тягами
 
-      const { manipulator, extruder, cargoBig, cargoSmall } = arm.nodes;
+      const { manipulator, extruder, extruderRod, cargoBig, cargoSmall } = arm.nodes;
       const rest = arm.restPos;
 
-      if (manipulator) {
-        manipulator.position.y = rest.manipulator.y - punch * 0.18;
-        manipulator.position.x = rest.manipulator.x + Math.sin(t * Math.PI * 2) * 0.1;
-      }
-      if (extruder) {
-        extruder.position.y = rest.extruder.y - punch * 0.12;
-      }
-      // Грузы едут по мини-ленте вдоль локальной Z и на новом цикле возвращаются к началу.
-      if (cargoSmall) cargoSmall.position.z = rest.cargoSmall.z - t * 1.4;
-      if (cargoBig) cargoBig.position.z = rest.cargoBig.z - t * 0.9;
+      // Манипулятор — только влево-вправо.
+      if (manipulator) manipulator.position.x = rest.manipulator.x + Math.sin(t * Math.PI * 2) * 0.35;
+
+      // Экструдер и его тяги — синхронно вверх-вниз, одним и тем же ходом.
+      if (extruder) extruder.position.y = rest.extruder.y - punch * 0.16;
+      if (extruderRod) extruderRod.position.y = rest.extruderRod.y - punch * 0.16;
+
+      // Грузы едут по мини-ленте вдоль локальной Z непрерывно, своим циклом.
+      if (cargoSmall) cargoSmall.position.z = rest.cargoSmall.z - arm.beltPhase * 1.4;
+      if (cargoBig) cargoBig.position.z = rest.cargoBig.z - arm.beltPhase * 0.9;
     }
   }
 
