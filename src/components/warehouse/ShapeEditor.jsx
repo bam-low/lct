@@ -16,10 +16,10 @@ const CELL_COLOR = {
 
 const TOOLS = [
   { id: "floor", label: "🧱 Пол", cell: CELL.FLOOR },
-  { id: "loading", label: "🚚 Зона загрузки", cell: CELL.GATE_OUT },
-  { id: "unloading", label: "📤 Зона выгрузки", cell: CELL.GATE_IN },
+  { id: "loading", label: "📤 Погрузка (склад → фура)", cell: CELL.GATE_OUT },
+  { id: "unloading", label: "📥 Разгрузка (фура → склад)", cell: CELL.GATE_IN },
   { id: "rack", label: "📦 Стеллаж", cell: CELL.RACK },
-  { id: "erase", label: "⬜ Ластик", cell: CELL.EMPTY },
+  { id: "erase", label: "⬜ Ластик", cell: null },
 ];
 
 function isGateValue(value) {
@@ -128,8 +128,16 @@ export default function ShapeEditor({ shape, floorAreaM2, onSave, onClose }) {
     const gz = Math.floor(((clientY - rect.top) / rect.height) * draft.gridSize);
     if (gx < 0 || gz < 0 || gx >= draft.gridSize || gz >= draft.gridSize) return;
 
-    const cellValue = TOOLS.find((t) => t.id === tool).cell;
-    if (cellAt(draft, gx, gz) === cellValue) return;
+    const current = cellAt(draft, gx, gz);
+    const toolCell = TOOLS.find((t) => t.id === tool).cell;
+    // Ластик контекстный: с клетки-метки (ворота/стеллаж) снимает только
+    // метку, возвращая обычный пол — иначе стирание чужой пометки выглядело
+    // как «стирает пол и рисует стену» (клетка становилась EMPTY, то есть
+    // снаружи контура, и там сразу появлялась стена). Стирает контур
+    // (убирает пол целиком, что действительно может сдвинуть стену) только
+    // когда под курсором уже обычный пол.
+    const cellValue = toolCell !== null ? toolCell : current === CELL.FLOOR ? CELL.EMPTY : CELL.FLOOR;
+    if (current === cellValue) return;
 
     setCellAt(draft, gx, gz, cellValue);
     redraw(draft);
