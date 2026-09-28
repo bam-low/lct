@@ -540,6 +540,56 @@ export const CATALOG = [
       confidence: "низкая — нет подтверждённого кейса",
     },
   },
+  {
+    id: "stacker-1",
+    identification: {
+      vendor: "Битроботикс",
+      name: "Битроботикс УК-450",
+      type: "stacker",
+      purpose:
+        "Роботизированный комплекс на базе дельта-манипулятора: укладка, сортировка, отбраковка и упаковка заготовок и готовой продукции — реальная модель пользователя, альтернатива ArmTech Sorter со своей встроенной мини-лентой вместо парных конвейеров",
+      country: "РФ",
+      availability: "в наличии",
+    },
+    technical: {
+      throughput: 3000,
+      throughputUnit: "оп/ч",
+      speed: null,
+      autonomyHours: null,
+      energy: { workPowerKw: 4.2, idlePowerKw: 0.4, chargeHours: null },
+      positioningAccuracyMm: 2,
+      navigationType: "фиксированная база (дельта-кинематика)",
+    },
+    infra: {
+      floorRequirement: "стол/линия подачи заготовок, фундамент не требуется",
+      power: "380В, 4.2кВт",
+      conveyorRequired: false,
+      conveyorPerRobotM: 0,
+    },
+    economics: {
+      equipmentCost: 12000000,
+      infrastructureCost: 200000,
+      softwareCost: 150000,
+      implementationCost: 300000,
+      commissioningCost: 80000,
+      trainingCost: 30000,
+      maintenanceCostPerYear: 260000,
+      serviceCostPerYear: 140000,
+      lifespanYears: 8,
+      raas: { monthlyRate: 180000, contractMonths: 36, buyoutOption: false },
+    },
+    applicability: {
+      objectTypes: ["warehouse"],
+      processes: ["sorting"],
+      limitations: ["лёгкие штучные заготовки, до 3 кг", "не встраивается в существующие парные конвейеры — своя выделенная линия подачи"],
+      cases: ['Производство основ для пицц компании «Вкусилия», Москва'],
+    },
+    dataQuality: {
+      source: "каталог ФЦ БАС (карточка реального решения ООО «Битроботикс»)",
+      lastUpdated: "2026-09",
+      confidence: "высокая — подтверждённый кейс внедрения",
+    },
+  },
 ];
 
 export function catalogFor(objectTypeId, processId) {

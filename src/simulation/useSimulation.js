@@ -7,6 +7,7 @@ import { createVacuumFleet } from "./vacuums/vacuumFleet.js";
 import { makeVacuumRobot } from "./robots/vacuumRobot.js";
 import { makeFloorWasherRobot } from "./robots/floorWasherRobot.js";
 import { createArmFleet } from "./arms/armFleet.js";
+import { createStackerFleet } from "./arms/stackerFleet.js";
 import { makeArmRobot } from "./robots/armRobot.js";
 import { makeWeldArmRig } from "./robots/weldArmRobot.js";
 import { createLoaderSystem } from "./loaders/loaderSystem.js";
@@ -196,15 +197,25 @@ export function useSimulation(cfg) {
       level.grid.fill(0);
 
       if (useArm && armCount > 0) {
-        level.armFleet = createArmFleet({
-          group: level.armGroup,
-          zone: layout.armZone,
-          count: armCount,
-          beltTexture: st.beltTexture,
-          armProd,
-          energyProfile: energyProfiles.arm,
-          robotFactory: armFactoryOf(armType),
-        });
+        if (armType === "stacker") {
+          level.armFleet = createStackerFleet({
+            group: level.armGroup,
+            zone: layout.armZone,
+            count: armCount,
+            armProd,
+            energyProfile: energyProfiles.arm,
+          });
+        } else {
+          level.armFleet = createArmFleet({
+            group: level.armGroup,
+            zone: layout.armZone,
+            count: armCount,
+            beltTexture: st.beltTexture,
+            armProd,
+            energyProfile: energyProfiles.arm,
+            robotFactory: armFactoryOf(armType),
+          });
+        }
       }
 
       if (useVacuum && vacuumCount > 0 && modelState === "ready") {
