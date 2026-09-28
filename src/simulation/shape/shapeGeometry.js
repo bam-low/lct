@@ -16,6 +16,22 @@ function isInterior(shape, gx, gz) {
   return cellAt(shape, gx, gz) !== CELL.EMPTY;
 }
 
+// Любая из трёх «воротных» клеток — двунаправленная (пресет по умолчанию) и
+// две направленные (конструктор «своей» формы, см. shapeTypes.js). Для стен и
+// кластеризации разница в направлении не важна — важно, что здесь проём.
+function isGateCell(value) {
+  return value === CELL.GATE || value === CELL.GATE_IN || value === CELL.GATE_OUT;
+}
+
+// 'in' — «зона выгрузки» (фура привозит), 'out' — «зона загрузки» (фура
+// забирает), 'generic' — двунаправленные ворота пресета по умолчанию (или
+// старые сохранённые формы без направления — тогда ведут себя как раньше).
+function gateKindOf(value) {
+  if (value === CELL.GATE_IN) return "in";
+  if (value === CELL.GATE_OUT) return "out";
+  return "generic";
+}
+
 // Мировые границы залитых (не EMPTY) клеток. Для buildDefaultShape() это ровно
 // {xMin:-50,xMax:50,zMin:-50,zMax:50} — сегодняшний FLOOR.
 export function boundingBoxOf(shape) {
@@ -52,8 +68,10 @@ export function computeGateClusters(shape) {
   for (let gz = 0; gz < shape.gridSize; gz++) {
     for (let gx = 0; gx < shape.gridSize; gx++) {
       const idx = gz * shape.gridSize + gx;
-      if (visited[idx] || cellAt(shape, gx, gz) !== CELL.GATE) continue;
+      const seedValue = cellAt(shape, gx, gz);
+      if (visited[idx] || !isGateCell(seedValue)) continue;
 
+      const kind = gateKindOf(seedValue);
       const cells = [];
       const exposedCount = { north: 0, south: 0, west: 0, east: 0 };
       const stack = [[gx, gz]];
@@ -73,7 +91,7 @@ export function computeGateClusters(shape) {
           }
 
           const nIdx = nz * shape.gridSize + nx;
-          if (cellAt(shape, nx, nz) === CELL.GATE && !visited[nIdx]) {
+          if (isGateCell(cellAt(shape, nx, nz)) && !visited[nIdx]) {
             visited[nIdx] = 1;
             stack.push([nx, nz]);
           }
@@ -93,6 +111,7 @@ export function computeGateClusters(shape) {
       clusters.push({
         id: nextId++,
         cells,
+        kind,
         boundarySide,
         normal,
         worldCenter: { x: centerX, z: centerZ },
@@ -142,7 +161,7 @@ function collectRuns(shape, side, out) {
       const gx = lineIsRow ? t : line;
       const gz = lineIsRow ? line : t;
       const isBoundary = t < tangentialCount && isInterior(shape, gx, gz) && !isInterior(shape, gx + dgx, gz + dgz);
-      const isGate = isBoundary && cellAt(shape, gx, gz) === CELL.GATE;
+      const isGate = isBoundary && isGateCell(cellAt(shape, gx, gz));
 
       if (isBoundary && run && run.isGate === isGate) {
         run.end = t;

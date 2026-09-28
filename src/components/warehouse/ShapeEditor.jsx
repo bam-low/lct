@@ -10,19 +10,25 @@ const CELL_COLOR = {
   [CELL.FLOOR]: "#464549",
   [CELL.GATE]: "#E5A13F",
   [CELL.RACK]: "#C85E70",
+  [CELL.GATE_OUT]: "#E5A13F",
+  [CELL.GATE_IN]: "#6F9BD1",
 };
 
 const TOOLS = [
   { id: "floor", label: "🧱 Пол", cell: CELL.FLOOR },
-  { id: "loading", label: "🚚 Зона загрузки", cell: CELL.GATE },
-  { id: "unloading", label: "📤 Зона выгрузки", cell: CELL.GATE },
+  { id: "loading", label: "🚚 Зона загрузки", cell: CELL.GATE_OUT },
+  { id: "unloading", label: "📤 Зона выгрузки", cell: CELL.GATE_IN },
   { id: "rack", label: "📦 Стеллаж", cell: CELL.RACK },
   { id: "erase", label: "⬜ Ластик", cell: CELL.EMPTY },
 ];
 
-// Ворота считаются настоящими, только если клетка GATE касается края
+function isGateValue(value) {
+  return value === CELL.GATE || value === CELL.GATE_IN || value === CELL.GATE_OUT;
+}
+
+// Ворота считаются настоящими, только если клетка ворот касается края
 // нарисованной формы (computeGateClusters — как и в остальном приложении);
-// клетка GATE где-то в глубине пола молча ничего не делает. В редакторе такие
+// клетка ворот где-то в глубине пола молча ничего не делает. В редакторе такие
 // клетки нужно явно показать, иначе пользователь не поймёт, почему поставленная
 // им «зона выгрузки» никак не проявляется в 3D-сцене.
 function invalidGateCellsOf(shape) {
@@ -34,7 +40,7 @@ function invalidGateCellsOf(shape) {
   const invalid = new Set();
   for (let gz = 0; gz < shape.gridSize; gz++) {
     for (let gx = 0; gx < shape.gridSize; gx++) {
-      if (cellAt(shape, gx, gz) === CELL.GATE && !clustered.has(`${gx},${gz}`)) invalid.add(`${gx},${gz}`);
+      if (isGateValue(cellAt(shape, gx, gz)) && !clustered.has(`${gx},${gz}`)) invalid.add(`${gx},${gz}`);
     }
   }
 
@@ -82,8 +88,8 @@ function drawGrid(ctx, shape) {
 }
 
 // Конструктор формы склада: рисуем контур как пиксель-арт по сетке чанков и
-// расставляем зону загрузки/выгрузки (обе красят одну и ту же клетку GATE —
-// разделение чисто визуальное, для удобства разметки, см. план) и стеллажи.
+// расставляем зону загрузки/выгрузки (разные клетки, GATE_OUT/GATE_IN — у
+// каждой своё поведение погрузчиков, см. customLoaderFleet.js) и стеллажи.
 // Не модальное окно — тот же инлайн-панельный стиль, что RobotTypesSelect/ParamsForm.
 export default function ShapeEditor({ shape, floorAreaM2, onSave, onClose }) {
   const [draft, setDraft] = useState(() => cloneShape(shape ?? buildDefaultShape()));
@@ -95,7 +101,7 @@ export default function ShapeEditor({ shape, floorAreaM2, onSave, onClose }) {
     let floorCells = 0;
     let rackCells = 0;
     for (let i = 0; i < draft.cells.length; i++) {
-      if (draft.cells[i] === CELL.FLOOR || draft.cells[i] === CELL.GATE) floorCells++;
+      if (draft.cells[i] === CELL.FLOOR || isGateValue(draft.cells[i])) floorCells++;
       if (draft.cells[i] === CELL.RACK) rackCells++;
     }
 
@@ -167,8 +173,9 @@ export default function ShapeEditor({ shape, floorAreaM2, onSave, onClose }) {
       </div>
 
       <p className="text-xs text-[#6b5f7a]">
-        Нарисуйте контур склада и расставьте зоны как пиксель-арт по сетке. Зона загрузки и зона выгрузки — просто
-        две кисти для удобства разметки, ворота при этом двунаправленные, как и сегодня.
+        Нарисуйте контур склада и расставьте зоны как пиксель-арт по сетке. На зону выгрузки приезжают фуры с
+        товаром — роботы везут его на ближайший стеллаж; на зону загрузки фуры приезжают за товаром — роботы везут
+        его со стеллажа. Если фуры сейчас нет — роботы ждут её у ворот.
       </p>
 
       <div className="flex flex-wrap gap-1.5">

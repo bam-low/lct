@@ -223,6 +223,32 @@ function drawRackCells(ctx, shape) {
   }
 }
 
+// Клетки-ворота направленного типа (CELL.GATE_IN/GATE_OUT) — маркер прямо на
+// полу у проёма, чтобы было видно, где выгрузка (синий), а где загрузка
+// (оранжевый), не открывая редактор. Обычные двунаправленные ворота (пресет
+// по умолчанию) не размечаются — там читается формулой storageLayout.js.
+function drawGateCells(ctx, shape) {
+  ctx.lineWidth = 1.5;
+
+  for (let gz = 0; gz < shape.gridSize; gz++) {
+    for (let gx = 0; gx < shape.gridSize; gx++) {
+      const value = cellAt(shape, gx, gz);
+      if (value !== CELL.GATE_IN && value !== CELL.GATE_OUT) continue;
+
+      const a = cellWorldOrigin(gx, gz);
+      const b = cellWorldOrigin(gx + 1, gz + 1);
+      const outer = rectToPx(a.x, b.x, a.z, b.z);
+      const inset = (outer.x1 - outer.x0) * 0.14;
+      const rect = { x0: outer.x0 + inset, x1: outer.x1 - inset, z0: outer.z0 + inset, z1: outer.z1 - inset };
+
+      ctx.fillStyle = value === CELL.GATE_IN ? PALETTE.gateIn : PALETTE.gateOut;
+      ctx.strokeStyle = "rgba(255,255,255,0.4)";
+      fillRect(ctx, rect);
+      strokeRect(ctx, rect);
+    }
+  }
+}
+
 // Статичный слой пола: один цвет по всей площади + площадки роборук + сетка
 // чанков + проезды и склад (если есть погрузчики). Покрытие пылесосов на нём не
 // рисуется — оно видно только по следу.
@@ -240,7 +266,10 @@ export function drawFloorBase(ctx, { shape, layout, armCount, vacuumCount, chunk
 
   if (layout.restrictedZone) drawRestrictedZone(ctx, layout.restrictedZone);
   if (layout.useLoader && (!shape || isDefaultShape(shape))) drawLoaderFloor(ctx, slotsPerLane);
-  if (shape && !isDefaultShape(shape)) drawRackCells(ctx, shape);
+  if (shape && !isDefaultShape(shape)) {
+    drawRackCells(ctx, shape);
+    drawGateCells(ctx, shape);
+  }
   if (layout.armZone && armCount > 0) drawArmPads(ctx, layout.armZone, armCount);
   if (layout.useVacuum) drawChargingStations(ctx, vacuumCount, layout.vacuumZone.xMin);
 
