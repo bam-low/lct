@@ -41,16 +41,22 @@ const AT_GATE_SECONDS = 2;
 const AT_CONVEYOR_SECONDS = 1.2;
 
 // Багажные тягачи — второй вид робота на сцене аэропорта, по ТЗ («Беспилотный
-// тягач», см. Примеры_решений_типы_объектов.docx). Декоративный фоновый
-// процесс (как самолёты на дальней ВПП) — курсируют по перрону вдоль линии
-// гейтов, не участвуют в расчёте экономики (там по-прежнему один процесс —
-// транспортировка, как и раньше).
+// тягач», см. Примеры_решений_типы_объектов.docx). В расчёт экономики
+// по-прежнему не входят (там один процесс — транспортировка), но маршрут не
+// декоративный: тягач едет к реально припаркованному борту, забирает/сдаёт
+// багаж и возвращается на свою площадку — тот же цикл, что и у
+// транспортировщика (dispatch по свободным ботам), только без депо за стеной:
+// площадка тягачей стоит прямо на перроне, поэтому в стену не упирается.
 const TUG_COUNT = 2;
 const TUG_SPEED = 3.4;
-const TUG_MARGIN = 6;
+const TUG_MARGIN = 10;
 const TUG_LANE_GAP = 3.2;
 const TUG_FADE_SECONDS = 1.4;
 const AT_BASE_SECONDS = 1;
+const TUG_AT_GATE_SECONDS = 3.5; // погрузка/выгрузка багажа у борта
+const TUG_AT_BASE_SECONDS = 2; // сдача багажа на площадке
+const TUG_GAP_MIN_S = 10; // как минимум столько ждёт гейт до следующего заезда тягача
+const TUG_GAP_MAX_S = 20;
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -109,6 +115,17 @@ function serviceSpotOf(bot, gate) {
   };
 }
 
+// Место тягача у борта — с противоположной от транспортировщика стороны
+// (тот стоит по TRANSPORTER_STAND_X_OFFSET впереди сбоку), ближе к хвосту,
+// где по смыслу багажный отсек, и со своим сдвигом по полосе на бота.
+function tugStandOf(tug, gate) {
+  const lane = tug.id % 2 === 0 ? -1 : 1;
+  return {
+    x: gate.x + lane * 3.4,
+    z: gate.z + GATE_STAND_OFFSET_Z + 3.2,
+  };
+}
+
 // Место ожидания своей очереди у конвейера (жалоба: несколько ботов
 // одновременно валили груз в одну точку) — со сдвигом по боту, чтобы
 // ожидающие не стояли друг в друге; на разгрузку выезжает только один
@@ -121,10 +138,10 @@ function conveyorWaitSpot(bot) {
 // Начинает новый прямолинейный участок маршрута от текущей позиции бота —
 // длительность считается от расстояния и единой скорости, поэтому дальние
 // гейты едут дольше ближних, а не все за одно и то же время.
-function startLeg(bot, to, phase) {
+function startLeg(bot, to, phase, speed = TRANSPORTER_SPEED) {
   bot.legFrom = { x: bot.x, z: bot.z };
   bot.legTo = to;
-  bot.legDuration = Math.max(0.15, dist(bot.x, bot.z, to.x, to.z) / TRANSPORTER_SPEED);
+  bot.legDuration = Math.max(0.15, dist(bot.x, bot.z, to.x, to.z) / speed);
   bot.phase = phase;
   bot.t = 0;
   bot.mesh.rotation.y = headingZForward(to.x - bot.x, to.z - bot.z);
@@ -164,6 +181,29 @@ function dispatchTransporters(st) {
     idleBot.gateIndex = gate.index;
     startLeg(idleBot, gateDoorOf(gate), "toGateDoor");
   }
+}
+
+// Раздаёт свободных тягачей припаркованным бортам: среди гейтов, у которых
+// самолёт уже стоит и к которым сейчас не едет другой тягач, выбирает тот,
+// что дольше всех ждёт (или ещё ни разу не обслуживался) — так со временем
+// объезжаются все гейты по очереди, а не только ближайший к базе.
+function dispatchTugs(st) {
+  const { gates, tugs } = st.entities;
+
+  const idleTug = tugs.find((t) => t.phase === "idle");
+  if (!idleTug) return;
+
+  let bestGate = null;
+  for (const gate of gates) {
+    if (!gate.planeParked) continue;
+    if (gate.nextTugDue > st.simSeconds) continue;
+    if (tugs.some((t) => t.gateIndex === gate.index && t.phase !== "idle")) continue;
+    if (!bestGate || gate.nextTugDue < bestGate.nextTugDue) bestGate = gate;
+  }
+  if (!bestGate) return;
+
+  idleTug.gateIndex = bestGate.index;
+  startLeg(idleTug, tugStandOf(idleTug, bestGate), "toStand", TUG_SPEED);
 }
 
 // React ↔ Three.js для аэропорта — 3D как основа (та же изометрия, что у
@@ -230,7 +270,7 @@ export function useAirportSimulation3D({
     // начала. Телетрап — часть инфраструктуры терминала, виден всегда.
     const gates = gatePositions(gatesCount).map((pos) => {
       makeJetBridge(pos, st.dynamicGroup);
-      return { ...pos, occupied: false, planeParked: false, servedBy: null };
+      return { ...pos, occupied: false, planeParked: false, servedBy: null, nextTugDue: 0 };
     });
 
     // Груз на платформе — иначе транспортировщик просто ездит туда-сюда без
@@ -268,12 +308,29 @@ export function useAirportSimulation3D({
 
     const tugs = Array.from({ length: TUG_COUNT }, (_, i) => {
       const mesh = makeBaggageTrain(3);
-      const z = TAXI_Z + 3 + i * TUG_LANE_GAP;
-      const startX = i % 2 === 0 ? TERMINAL.xMin + TUG_MARGIN : TERMINAL.xMax - TUG_MARGIN;
-      mesh.position.set(startX, 0, z);
+      // Площадка — в открытой части перрона, за линией припаркованных бортов
+      // (TAXI_Z), а не у стены терминала: там нос борта на стоянке (z ~ gate.z
+      // + GATE_STAND_OFFSET_Z − длина фюзеляжа) и площадка бы с ним пересекалась.
+      const baseX = i % 2 === 0 ? TERMINAL.xMin + TUG_MARGIN : TERMINAL.xMax - TUG_MARGIN;
+      const baseZ = TAXI_Z + 3 + Math.floor(i / 2) * TUG_LANE_GAP;
+      mesh.position.set(baseX, 0, baseZ);
       st.dynamicGroup.add(mesh);
 
-      return { mesh, x: startX, z, dir: i % 2 === 0 ? 1 : -1, fade: createMaterializeFade(mesh, TUG_FADE_SECONDS) };
+      return {
+        id: i,
+        mesh,
+        baseX,
+        baseZ,
+        x: baseX,
+        z: baseZ,
+        phase: "idle",
+        gateIndex: null,
+        t: 0,
+        legFrom: null,
+        legTo: null,
+        legDuration: 0,
+        fade: createMaterializeFade(mesh, TUG_FADE_SECONDS),
+      };
     });
 
     st.entities = {
@@ -413,32 +470,60 @@ function step(st, dt) {
 
   dispatchTransporters(st);
   stepTransporters(st, dt);
+  dispatchTugs(st);
+  stepTugs(st, dt);
   stepConveyor(st, dt);
   stepPlanes(st, dt);
-  stepTugs(st, dt);
 }
 
-// Багажные тягачи едут туда-сюда вдоль перрона по своей полосе, разворачиваясь
-// у краёв терминала — простой декоративный патруль (как самолёты на дальней
-// ВПП), не завязан на гейты/фуры/экономику.
+// Тягач едет к реально припаркованному борту (dispatchTugs), грузит/сдаёт
+// багаж у гейта, возвращается на свою площадку сдать его и там же ждёт
+// следующего назначения — тот же принцип, что у транспортировщика
+// (toStand → atGate → toBase → atBase → idle), только без депо за стеной:
+// площадка стоит прямо на перроне, ехать через гейт в здание не нужно.
 function stepTugs(st, dt) {
-  const minX = TERMINAL.xMin + TUG_MARGIN;
-  const maxX = TERMINAL.xMax - TUG_MARGIN;
+  const { gates, tugs } = st.entities;
 
-  for (const tug of st.entities.tugs) {
+  for (const tug of tugs) {
     tug.fade.update(dt);
-    tug.x += tug.dir * TUG_SPEED * dt;
+    if (tug.phase === "idle") continue;
 
-    if (tug.x >= maxX) {
-      tug.x = maxX;
-      tug.dir = -1;
-    } else if (tug.x <= minX) {
-      tug.x = minX;
-      tug.dir = 1;
+    const gate = gates[tug.gateIndex];
+
+    switch (tug.phase) {
+      case "toStand":
+        if (advanceLeg(tug, dt)) {
+          tug.phase = "atGate";
+          tug.t = 0;
+        }
+        break;
+
+      case "atGate":
+        tug.t += dt;
+        if (tug.t >= TUG_AT_GATE_SECONDS) {
+          startLeg(tug, { x: tug.baseX, z: tug.baseZ }, "toBase", TUG_SPEED);
+        }
+        break;
+
+      case "toBase":
+        if (advanceLeg(tug, dt)) {
+          tug.phase = "atBase";
+          tug.t = 0;
+        }
+        break;
+
+      case "atBase":
+        tug.t += dt;
+        if (tug.t >= TUG_AT_BASE_SECONDS) {
+          gate.nextTugDue = st.simSeconds + TUG_GAP_MIN_S + Math.random() * (TUG_GAP_MAX_S - TUG_GAP_MIN_S);
+          tug.gateIndex = null;
+          tug.phase = "idle";
+        }
+        break;
+
+      default:
+        break;
     }
-
-    tug.mesh.position.set(tug.x, 0, tug.z);
-    tug.mesh.rotation.y = tug.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
   }
 }
 
