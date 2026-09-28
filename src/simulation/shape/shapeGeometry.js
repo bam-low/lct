@@ -123,6 +123,63 @@ export function computeGateClusters(shape) {
   return clusters;
 }
 
+// Стеллажи (CELL.RACK), сгруппированные в прямоугольные препятствия для
+// объезда движущихся роботов на своей форме склада (жалоба пользователя:
+// пылесосы ездили прямо сквозь нарисованные стеллажи) — один прямоугольник на
+// связную группу клеток, а не на каждую клетку отдельно, чтобы объезд не
+// дёргался на стыке соседних клеток одного стеллажа. Тот же формат
+// {x, z, halfX, halfZ}, что у computeArmObstacles (obstacles.js) — подмешивается
+// в тот же список и объезжается тем же dodgeX.
+export function computeRackObstacles(shape) {
+  const visited = new Uint8Array(shape.gridSize * shape.gridSize);
+  const obstacles = [];
+
+  for (let gz = 0; gz < shape.gridSize; gz++) {
+    for (let gx = 0; gx < shape.gridSize; gx++) {
+      const idx = gz * shape.gridSize + gx;
+      if (visited[idx] || cellAt(shape, gx, gz) !== CELL.RACK) continue;
+
+      let minGx = gx;
+      let maxGx = gx;
+      let minGz = gz;
+      let maxGz = gz;
+      const stack = [[gx, gz]];
+      visited[idx] = 1;
+
+      while (stack.length) {
+        const [cx, cz] = stack.pop();
+        if (cx < minGx) minGx = cx;
+        if (cx > maxGx) maxGx = cx;
+        if (cz < minGz) minGz = cz;
+        if (cz > maxGz) maxGz = cz;
+
+        for (const { dgx, dgz } of DIRECTIONS) {
+          const nx = cx + dgx;
+          const nz = cz + dgz;
+          if (nx < 0 || nz < 0 || nx >= shape.gridSize || nz >= shape.gridSize) continue;
+
+          const nIdx = nz * shape.gridSize + nx;
+          if (!visited[nIdx] && cellAt(shape, nx, nz) === CELL.RACK) {
+            visited[nIdx] = 1;
+            stack.push([nx, nz]);
+          }
+        }
+      }
+
+      const a = cellWorldOrigin(minGx, minGz);
+      const b = cellWorldOrigin(maxGx + 1, maxGz + 1);
+      obstacles.push({
+        x: (a.x + b.x) / 2,
+        z: (a.z + b.z) / 2,
+        halfX: (b.x - a.x) / 2,
+        halfZ: (b.z - a.z) / 2,
+      });
+    }
+  }
+
+  return obstacles;
+}
+
 // Список сегментов стен вдоль границы формы: {normal:[nx,nz], hasGate, x0,x1,z0,z1}.
 // Для north/south — x0<x1 (протяжённость вдоль стены), z0===z1 (мировая линия
 // границы, до выдавливания по толщине — этим занимается walls.js). Для

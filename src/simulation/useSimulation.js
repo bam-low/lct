@@ -16,7 +16,7 @@ import { createStorageCubeFleet } from "./loaders/storageCubeFleet.js";
 import { makeForkliftRobot } from "./robots/forkliftRobot.js";
 import { makeTransporterRobot } from "./robots/transporterRobot.js";
 import { createWarehouseScene } from "./sceneSetup.js";
-import { isDefaultShape } from "./shape/shapeGeometry.js";
+import { isDefaultShape, computeRackObstacles } from "./shape/shapeGeometry.js";
 import { EMPTY_STATS, readStats, sameStats } from "./simStats.js";
 
 // Какую модель строить на процесс в зависимости от выбранного в каталоге
@@ -219,13 +219,18 @@ export function useSimulation(cfg) {
       }
 
       if (useVacuum && vacuumCount > 0 && modelState === "ready") {
+        // Стеллажи своей формы склада — такое же препятствие для пылесосов,
+        // как и роборуки (жалоба: раньше пылесосы ездили прямо сквозь них).
+        // На пресете по умолчанию стеллажей нет — пустой список, поведение не меняется.
+        const rackObstacles = isDefaultShape(shape) ? [] : computeRackObstacles(shape);
+
         level.vacuumFleet = createVacuumFleet({
           group: level.vacuumGroup,
           zone: layout.vacuumZone,
           count: vacuumCount,
           cleaningSpeed: vacuumSpeed,
           energyProfile: energyProfiles.vacuum,
-          obstacles: level.armFleet?.obstacles ?? [],
+          obstacles: [...(level.armFleet?.obstacles ?? []), ...rackObstacles],
           trail: { ctx: level.trailCtx, texture: level.trailTexture },
           grid: level.grid,
           robotFactory: vacuumFactoryOf(vacuumType),
