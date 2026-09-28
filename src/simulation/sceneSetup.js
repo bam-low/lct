@@ -41,7 +41,9 @@ export function createWarehouseScene(mount) {
 
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 500);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+  // preserveDrawingBuffer: снимок сцены (ТЗ 3.7.4) читает canvas по клику вне
+  // цикла рендера — без этого флага буфер к тому моменту может быть уже очищен.
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: true });
   renderer.setClearColor(0x000000, 0);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(width, SCENE_HEIGHT_PX);

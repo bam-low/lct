@@ -6,8 +6,9 @@ const ROUND_BUTTON = "w-8 h-8 rounded-full bg-white/70 hover:bg-white text-[#3F4
 const pill = (on) =>
   on ? "bg-[#3F4159] text-white" : "bg-white/70 hover:bg-white text-[#3F4159]";
 
-// 3D / 2D-план, зум и поворот камеры.
-export function ViewToolbar({ topView, onToggleTopView, onZoom, onRotate }) {
+// 3D / 2D-план, зум, поворот камеры и (если передан onSnapshot) сохранение
+// текущего кадра в PNG — ТЗ 3.7.4, экспорт визуализации.
+export function ViewToolbar({ topView, onToggleTopView, onZoom, onRotate, onSnapshot }) {
   return (
     <div className="flex gap-1.5 items-center">
       <button
@@ -22,6 +23,11 @@ export function ViewToolbar({ topView, onToggleTopView, onZoom, onRotate }) {
       <button onClick={() => onZoom(-6)} className={ROUND_BUTTON}>+</button>
       <button onClick={() => onRotate(-1)} className={ROUND_BUTTON}>↺</button>
       <button onClick={() => onRotate(1)} className={ROUND_BUTTON}>↻</button>
+      {onSnapshot && (
+        <button onClick={onSnapshot} title="Скачать снимок сцены (PNG)" className={ROUND_BUTTON}>
+          📷
+        </button>
+      )}
     </div>
   );
 }

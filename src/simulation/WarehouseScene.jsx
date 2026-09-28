@@ -3,6 +3,7 @@ import { MAX_VACUUM_COUNT, computeLayout } from "./layout.js";
 import { computeFloorChunks } from "./chunkGrid.js";
 import { SCENE_HEIGHT_PX, LOAD_SLOWDOWN, VACUUM_SWATH } from "./constants.js";
 import { useSimulation } from "./useSimulation.js";
+import { downloadCanvasSnapshot } from "./sceneUtils.js";
 import { buildVerifyRows, buildLegendItems } from "./verification.js";
 import { ROBOT_TITLES, PHASE_LABELS, formatHours, formatSimTime } from "./simStats.js";
 import { Stat, RobotCountPanel, MapLegend, VerificationPanel } from "./SimPanels.jsx";
@@ -165,6 +166,7 @@ export default function WarehouseScene({
           onToggleTopView={() => setTopView((v) => !v)}
           onZoom={zoomBy}
           onRotate={rotate}
+          onSnapshot={() => downloadCanvasSnapshot(mountRef, "sklad-scena.png")}
         />
       </div>
 

@@ -156,6 +156,26 @@ export function createMaterializeFade(object3D, durationS = 1.2) {
   };
 }
 
+// Скачивает текущий кадр сцены как PNG (ТЗ 3.7.4 — экспорт визуализации):
+// рендерер рисует в canvas без preserveDrawingBuffer, поэтому берём буфер сразу
+// после кадра, который уже отрисован (requestAnimationFrame уже прошёл к
+// моменту клика), — просто ищем canvas внутри контейнера сцены и сохраняем его.
+export function downloadCanvasSnapshot(mountRef, fileName) {
+  const canvas = mountRef.current?.querySelector("canvas");
+  if (!canvas) return;
+
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, "image/png");
+}
+
 export function applyColorSpace(target, isRenderer) {
   if (isRenderer) {
     target.outputColorSpace = THREE.SRGBColorSpace;

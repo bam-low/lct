@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAirportSimulation3D } from "./airport/useAirportSimulation3D.js";
+import { downloadCanvasSnapshot } from "./sceneUtils.js";
 import { Stat, MapLegend, VerificationPanel } from "./SimPanels.jsx";
 import { ViewToolbar, PlaybackControls } from "./SimControls.jsx";
 import { SCENE_HEIGHT_PX } from "./constants.js";
@@ -59,7 +60,13 @@ export default function AirportScene({ gatesCount, transportCount, transportThro
           <div className="text-sm font-bold text-[#3F4159]">Схема аэропорта · сценарий «{scenarioLabel}»</div>
           <div className="text-xs text-[#6b5f7a]">{gatesCount} гейтов · {transportCount} транспортировщиков</div>
         </div>
-        <ViewToolbar topView={topView} onToggleTopView={() => setTopView((v) => !v)} onZoom={zoomBy} onRotate={rotate} />
+        <ViewToolbar
+          topView={topView}
+          onToggleTopView={() => setTopView((v) => !v)}
+          onZoom={zoomBy}
+          onRotate={rotate}
+          onSnapshot={() => downloadCanvasSnapshot(mountRef, "aeroport-scena.png")}
+        />
       </div>
 
       <div className="rounded-xl overflow-hidden relative" style={{ height: SCENE_HEIGHT_PX }}>
