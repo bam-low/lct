@@ -3,6 +3,7 @@ import { FLOOR, MARGIN, WALL_HEIGHT } from "./layout.js";
 import { CANVAS_PX, PALETTE, TRAIL_OPACITY } from "./constants.js";
 import { applyColorSpace, disposeTree } from "./sceneUtils.js";
 import { createWalls } from "./walls.js";
+import { createRacks } from "./warehouseRacks.js";
 
 // Расстояние между этажами по высоте: стены + перекрытие (оно как раз ложится
 // на верх стен нижнего этажа).
@@ -122,6 +123,9 @@ export function createFloorLevel(shared, chunkLabels, index, shape) {
   const walls = createWalls(shape);
   group.add(walls.group);
 
+  const racks = createRacks(shape);
+  group.add(racks);
+
   const vacuumGroup = new THREE.Group();
   const armGroup = new THREE.Group();
   const loaderGroup = new THREE.Group();
@@ -131,6 +135,8 @@ export function createFloorLevel(shared, chunkLabels, index, shape) {
     index,
     group,
     walls,
+    racks,
+    racksBuiltFrom: shape,
     shape,
     trailCtx: trail.ctx,
     trailTexture: trail.texture,
@@ -146,12 +152,13 @@ export function createFloorLevel(shared, chunkLabels, index, shape) {
     loaderSystem: null,
 
     // Общие геометрии, материал пола и подписи чанков принадлежат сцене; здесь —
-    // только своё: слой следа, ящики и стены.
+    // только своё: слой следа, ящики, стены и стеллажи из конструктора формы.
     dispose() {
       trail.texture.dispose();
       trailPlane.material.dispose();
       disposeTree(crates);
       disposeTree(walls.group);
+      disposeTree(racks);
     },
   };
 
@@ -175,4 +182,21 @@ export function rebuildLevelWalls(level, shape) {
 
   level.walls = walls;
   level.shape = shape;
+}
+
+// Стеллажи из конструктора формы (CELL.RACK) — та же логика пересборки по
+// ссылке, что и у стен, но отдельным полем: rebuildLevelWalls уже обновляет
+// level.shape к моменту своего завершения, так что общий флаг не отличил бы
+// «стены уже пересобраны» от «стеллажи ещё нет».
+export function rebuildLevelRacks(level, shape) {
+  if (level.racksBuiltFrom === shape) return;
+
+  level.group.remove(level.racks);
+  disposeTree(level.racks);
+
+  const racks = createRacks(shape);
+  level.group.add(racks);
+
+  level.racks = racks;
+  level.racksBuiltFrom = shape;
 }

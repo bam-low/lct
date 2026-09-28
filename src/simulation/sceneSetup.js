@@ -3,7 +3,7 @@ import { FLOOR } from "./layout.js";
 import { PALETTE, ISO_ELEV, SCENE_HEIGHT_PX } from "./constants.js";
 import { applyColorSpace, disposeTree } from "./sceneUtils.js";
 import { createChunkLabelLayer } from "./chunkLabels.js";
-import { createFloorLevel, createSharedLevelAssets, rebuildLevelWalls, FLOOR_PITCH } from "./floorLevel.js";
+import { createFloorLevel, createSharedLevelAssets, rebuildLevelWalls, rebuildLevelRacks, FLOOR_PITCH } from "./floorLevel.js";
 
 const CAM_DIST = 108;
 const FOCUS_EASE = 0.12;
@@ -118,7 +118,12 @@ export function createWarehouseScene(mount) {
       levelsGroup.add(level.group);
     }
 
-    if (shape) for (const level of levels) rebuildLevelWalls(level, shape);
+    if (shape) {
+      for (const level of levels) {
+        rebuildLevelWalls(level, shape);
+        rebuildLevelRacks(level, shape);
+      }
+    }
   };
 
   // Активный этаж рисуется как обычно, остальные — полупрозрачными силуэтами:
