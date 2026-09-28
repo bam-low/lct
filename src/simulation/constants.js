@@ -98,6 +98,12 @@ export const PALETTE = {
 
 export const ISO_ELEV = Math.atan(1 / Math.sqrt(2));
 
+// Транспортировщик (LowCart) — glb-модель. Изначально рендерилась без
+// масштабирования вовсе (только forklift/truck его применяли), из-за чего
+// выглядела заметно мельче остальных роботов на той же сцене (жалоба
+// пользователя — «увеличить модельки в lowcart»).
+export const TRANSPORTER_MODEL_SCALE = 2.1;
+
 // Фура: масштаб модели, скорость и то, как груз тяжелит энергопотребление.
 export const TRUCK_MODEL_SCALE = 1.0;
 export const TRUCK_SPEED_MPS = 6; // м/с; в сцене делится на metersPerUnit, как и скорость погрузчика

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createGlbModel, normalizeModel } from "./glbModel.js";
+import { TRANSPORTER_MODEL_SCALE } from "../constants.js";
 
 // Транспортировщик — реальная модель пользователя (public/models/transporter.glb):
 // низкая платформа на колёсах, груз на неё ставит погрузчик или манипулятор,
@@ -15,6 +16,7 @@ export const transporterModel = createGlbModel("transporter.glb", normalizeModel
 
 export function makeTransporterRobot() {
   const model = transporterModel.clone();
+  model.scale.setScalar(TRANSPORTER_MODEL_SCALE);
   const deckY = new THREE.Box3().setFromObject(model).max.y;
 
   const carry = new THREE.Group();
